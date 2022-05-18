@@ -18,8 +18,8 @@
 
 
 // Replace with your network credentials
-const char* ssid = "A1_A1C70E";
-const char* password = "87399382";
+const char* ssid = "HERE GOES YOUR WIFI USERNAME";
+const char* password = "HERE GOES YOUR PASSWORD";
 
 StaticJsonDocument<100> Senzor;
 StaticJsonDocument<100> podaci;
