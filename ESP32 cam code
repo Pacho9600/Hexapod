@@ -1,0 +1,820 @@
+#include <ArduinoJson.h>
+#include <Arduino_JSON.h>
+#include "esp_camera.h"
+#include <WiFi.h>
+#include "esp_timer.h"
+#include "img_converters.h"
+#include "Arduino.h"
+#include "fb_gfx.h"
+#include "soc/soc.h"             // disable brownout problems
+#include "soc/rtc_cntl_reg.h"    // disable brownout problems
+#include "esp_http_server.h"
+#include "FS.h"
+#include "SPIFFS.h"
+#include <jsonlib.h>
+#include <WebSocketsServer.h>
+
+
+
+
+// Replace with your network credentials
+const char* ssid = "A1_A1C70E";
+const char* password = "87399382";
+
+StaticJsonDocument<100> Senzor;
+StaticJsonDocument<100> podaci;
+
+WebSocketsServer webSocket = WebSocketsServer(81);
+
+#define PART_BOUNDARY "123456789000000000000987654321"
+// pločica mora biti AI thinker
+#define CAMERA_MODEL_AI_THINKER
+//#define CAMERA_MODEL_WROVER_KIT
+
+#if defined(CAMERA_MODEL_WROVER_KIT)
+  #define PWDN_GPIO_NUM    -1
+  #define RESET_GPIO_NUM   -1
+  #define XCLK_GPIO_NUM    21
+  #define SIOD_GPIO_NUM    26
+  #define SIOC_GPIO_NUM    27
+  
+  #define Y9_GPIO_NUM      35
+  #define Y8_GPIO_NUM      34
+  #define Y7_GPIO_NUM      39
+  #define Y6_GPIO_NUM      36
+  #define Y5_GPIO_NUM      19
+  #define Y4_GPIO_NUM      18
+  #define Y3_GPIO_NUM       5
+  #define Y2_GPIO_NUM       4
+  #define VSYNC_GPIO_NUM   25
+  #define HREF_GPIO_NUM    23
+  #define PCLK_GPIO_NUM    22
+
+
+
+#elif defined(CAMERA_MODEL_AI_THINKER)
+  #define PWDN_GPIO_NUM     32
+  #define RESET_GPIO_NUM    -1
+  #define XCLK_GPIO_NUM      0
+  #define SIOD_GPIO_NUM     26
+  #define SIOC_GPIO_NUM     27
+  
+  #define Y9_GPIO_NUM       35
+  #define Y8_GPIO_NUM       34
+  #define Y7_GPIO_NUM       39
+  #define Y6_GPIO_NUM       36
+  #define Y5_GPIO_NUM       21
+  #define Y4_GPIO_NUM       19
+  #define Y3_GPIO_NUM       18
+  #define Y2_GPIO_NUM        5
+  #define VSYNC_GPIO_NUM    25
+  #define HREF_GPIO_NUM     23
+  #define PCLK_GPIO_NUM     22
+
+
+
+#else
+  #error "Camera model not selected"
+#endif
+
+
+static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
+static const char* _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
+static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
+
+
+
+httpd_handle_t camera_httpd = NULL;
+httpd_handle_t stream_httpd = NULL;
+
+
+StaticJsonDocument<100> doc; // Allocate a static JSON document
+
+String message = "";
+uint8_t socket_port;
+
+
+static const char PROGMEM INDEX_HTML[] = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<style>
+   html {
+    font-family: Arial, Helvetica, sans-serif;
+    display: inline-block;
+    text-align: center;
+  }
+  .button {
+    background-color: #2f4468;
+    border: none;
+    color: white;
+    padding: 10px 20px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 18px;
+    margin: 6px 3px;
+    cursor: pointer;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -khtml-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: rgba(0,0,0,0);
+  }
+  img {  width: auto ;
+    max-width: 100% ;
+    height: auto ; 
+  }
+  h1 {
+    font-size: 1.8rem;
+    color: white;
+  }
+  p {
+    font-size: 1.4rem;
+  }
+  .topnav {
+    overflow: hidden;
+    background-color: #0A1128;
+  }
+  body {
+    margin: 0;
+  }
+  .content {
+    padding: 30px;
+  }
+  .card-grid {
+    max-width: 1500px;
+    margin: 20px auto;
+    display: grid;
+    grid-gap: 2rem;
+    position: relative;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+  .card {
+    background-color: white;
+    box-shadow: 2px 2px 12px 1px rgba(140,140,140,.5);
+    height: auto-fit, minmax(200px, 1fr);
+    position:relative;
+  }
+  .card-title {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: #034078
+  }
+  
+  .state {
+    font-size: 1.2rem;
+    color:#1282A2;
+  }
+ 
+  .switch {
+    padding-left: 5%;
+    padding-right: 5%;
+  
+  }
+  #stick1{
+    position: relative;
+    height: 125px;
+
+  }
+  .base{
+    border:1px;
+    width:auto;
+    position: relative;
+    left: 0%;
+    height: 125px;
+    top: 0%;
+  }
+  .Joystick_base{
+    background: radial-gradient(at 75% 75%, darken(#fcfcfc,5) 0%, darken(#d1e8e2,15) 100%);
+    background-color: #41e42091;
+    
+    transform:translate(-50%,-50%);
+    transform-style: preserve-3d;
+    perspective: 100px;
+    box-shadow: -5px -10px 40px rgba(0, 0, 0, 0.05), 10px 10px 10px rgba(0, 0, 0, 0.3), 0px 0px 5px rgba(0, 0, 0, 0.5), 0px 0px 3px 20px rgba(176, 245, 161, 0.671), 0px 0px 10px rgba(0, 0, 0, 0.3);
+    border-radius: 50%;
+    border-color: hsl(193, 80%, 35%);
+    position: absolute;
+    left: 50% ;
+    top: 50%;
+    width: 100px;
+    height: 100px;
+  }
+  .Joystick_red{
+  background: radial-gradient(at 25% 25%, darken(#124a9e,5) 0%, darken(#0f1ea5,15) 100%);
+  backface-visibility:visible;
+  background-color: #3fff04;
+  border-radius: 50%;
+  width: 50px;
+  height: 50px;
+  position: absolute; 
+  left: 45%;
+  top: 30%;
+  perspective: 1000px;
+  box-shadow: inset -5px -10px 40px rgba(0, 0, 0, 0.05), inset 0px 0px 10px rgba(0, 0, 0, 0.3), inset 0px 0px 5px rgba(0, 0, 0, 0.5), inset 0px 0px 3px 1px rgba(0, 0, 0, 0.51), 0px 0px 10px rgba(0, 0, 0, 0.3);
+  }
+  .raspored{
+    position: absolute;
+    height: auto;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    justify-content: space-around;
+
+  }
+  .box1{
+    box-sizing: content-box;
+    width: 100px;
+    height: 30px;
+    border: solid 2px black;
+    background-color: #ffffff;
+  }
+  .box2{
+    box-sizing: content-box;
+    width: 100px;
+    height: 30px;
+    border: solid 2px rgb(199, 19, 19);
+    background-color: #ffffff;
+  }
+
+  .box3{
+    box-sizing: content-box;
+    width: 100px;
+    height: 30px;
+    border: solid 2px rgb(0, 0, 0);
+    background-color: #ffffff;
+  }
+  .state{
+    position: absolute;
+    bottom:50%;
+
+
+  }
+    </style>
+<head>
+    <title>Spider</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/png" href="favicon.png">
+
+</head>
+<body>
+
+    <div class="topnav">
+        <h1>Pauk</h1>
+
+    </div>
+    <div class="content">
+        <div class="card-grid">
+            <div class="card">
+                <p class="card-title">KAMERA</p>
+                <img src="" id="photo" >
+            </div>
+            <div class="card">
+                <p class="card-title"> Joystick</p>
+                    <div class = "base">
+                        <div class = "Joystick_base"></div>
+                        <div id= "stick1">
+                            <div class = "Joystick_red"></div>
+                        </div>
+                    </div>
+            </div>
+            <div class="card">
+                <p class="card-title"> Fader 3</p>
+                <p class="switch">
+                    <tr><td colspan="3" align="center"><button class="button" onmousedown="getValues();" ontouchstart="getValues();" onmouseup="Slanje('U');" ontouchend="Slanje('U');">Senzor</button></td></tr>
+                </p>
+                    <div class="raspored">    
+                        <div class="box1"> 
+                            <p class="state">Lijevo[cm]: <span id="senzor1"></span></p> </div>
+                        <div class="box2"> 
+                            <p class="state">Ispred[cm]: <span id="senzor2"></span></p> </div>
+                        <div class="box3">  
+                            <p class="state">Desno[cm]: <span id="senzor3"></span></p>
+                        </div>
+                    </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+
+    var gateway = 'ws://'+location.hostname+':81/'
+    var websocket;
+    window.addEventListener('load', onload);
+
+function onload(event) {
+    initWebSocket();
+    
+}
+
+function getValues(){
+    websocket.send("U");
+}
+
+function Slanje(x){
+  websocket.send(x);
+}
+
+function initWebSocket() {
+    console.log('Trying to open a WebSocket connection…');
+    websocket = new WebSocket(gateway);
+    websocket.onopen = onOpen;
+    websocket.onclose = onClose;
+    websocket.onmessage = onMessage;
+}
+
+function onOpen(event) {
+    console.log('Connection opened');
+    getValues();
+}
+
+function onClose(event) {
+    console.log('Connection closed');
+    setTimeout(initWebSocket, 2000);
+}
+
+
+
+function onMessage(event) {
+    console.log(event.data);
+    const podaci = JSON.stringify(event.data);
+    console.log("podaci");
+    console.log(podaci);
+    const Senzor = JSON.parse(podaci);
+    console.log("Senzor");
+    console.log(Senzor);
+    document.getElementById("senzor1").innerHTML = Senzor.Lijevo;
+    document.getElementById("senzor2").innerHTML = Senzor.Desno;
+    document.getElementById("senzor3").innerHTML = Senzor.Ispred;
+    }
+
+    
+
+    window.onload = document.getElementById("photo").src = window.location.href.slice(0, -1) + ":82/stream";
+    
+class JoystickController
+{
+  // stickID: ID of HTML element (representing joystick) that will be dragged
+  // maxDistance: maximum amount joystick can move in any direction
+  // deadzone: joystick must move at least this amount from origin to register value change
+  constructor( stickID, maxDistance, deadzone )
+  {
+    this.id = stickID;
+    let stick = document.getElementById(stickID);
+
+    // location from which drag begins, used to calculate offsets
+    this.dragStart = null;
+
+    // track touch identifier in case multiple joysticks present
+    this.touchId = null;
+    
+    this.active = false;
+    this.value = { x: 0, y: 0 }; 
+
+    let self = this;
+
+    function handleDown(event)
+    {
+        self.active = true;
+
+      // all drag movements are instantaneous
+      stick.style.transition = '0s';
+
+      // touch event fired before mouse event; prevent redundant mouse event from firing
+      event.preventDefault();
+
+        if (event.changedTouches)
+          self.dragStart = { x: event.changedTouches[0].clientX, y: event.changedTouches[0].clientY };
+        else
+          self.dragStart = { x: event.clientX, y: event.clientY };
+
+      // if this is a touch event, keep track of which one
+        if (event.changedTouches)
+          self.touchId = event.changedTouches[0].identifier;
+    }
+    
+    function handleMove(event) 
+    {
+        if ( !self.active ) return;
+
+        // if this is a touch event, make sure it is the right one
+        // also handle multiple simultaneous touchmove events
+        let touchmoveId = null;
+        if (event.changedTouches)
+        {
+          for (let i = 0; i < event.changedTouches.length; i++)
+          {
+            if (self.touchId == event.changedTouches[i].identifier)
+            {
+              touchmoveId = i;
+              event.clientX = event.changedTouches[i].clientX;
+              event.clientY = event.changedTouches[i].clientY;
+            }
+          }
+
+          if (touchmoveId == null) return;
+        }
+      
+        const xDiff = event.clientX - self.dragStart.x;
+        const yDiff = event.clientY - self.dragStart.y;
+        const angle = Math.atan2(yDiff, xDiff);
+      const distance = Math.min(maxDistance, Math.hypot(xDiff, yDiff));
+      const xPosition = distance * Math.cos(angle);
+      const yPosition = distance * Math.sin(angle);
+
+
+      // move stick image to new position
+        stick.style.transform = `translate3d(${xPosition}px, ${yPosition}px, 0px)`;
+
+      // deadzone adjustment
+      const distance2 = (distance < deadzone) ? 0 : maxDistance / (maxDistance - deadzone) * (distance - deadzone);
+        const xPosition2 = distance2 * Math.cos(angle);
+      const yPosition2 = distance2 * Math.sin(angle);
+        var xPercent = parseFloat((xPosition2 / maxDistance).toFixed(4));
+        var yPercent = parseFloat((yPosition2 / maxDistance).toFixed(4));
+        
+      if (xPercent > 0 && yPercent < 0){
+        
+        yPercent=-yPercent
+      }
+      else if (xPercent > 0 && yPercent > 0){
+        
+        yPercent=-yPercent
+      }
+      else if (xPercent < 0 && yPercent < 0){
+        
+        xPercent=-xPercent
+      }
+      else if (xPercent < 0 && yPercent > 0){
+        
+        yPercent=-yPercent
+      }
+
+        self.value = { x: xPercent, y: yPercent };
+      }
+
+    function handleUp(event) 
+    {
+        if ( !self.active ) return;
+
+        // if this is a touch event, make sure it is the right one
+        if (event.changedTouches && self.touchId != event.changedTouches[0].identifier) return;
+
+        // transition the joystick position back to center
+        stick.style.transition = '.2s';
+        stick.style.transform = `translate3d(0px, 0px, 0px)`;
+
+        // reset everything
+        self.value = { x: 0, y: 0 };
+        self.touchId = null;
+        self.active = false;
+    }
+
+
+    stick.addEventListener('mousedown', handleDown);
+    stick.addEventListener('touchstart', handleDown);
+    document.addEventListener('mousemove', handleMove, {passive: false});
+    document.addEventListener('touchmove', handleMove, {passive: false});
+    document.addEventListener('mouseup', handleUp);
+    document.addEventListener('touchend', handleUp);
+  }
+
+}
+
+let joystick1 = new JoystickController("stick1", 64, 8);
+
+function update()
+{
+  document.getElementById("status1").innerText = "Kordinate: " + JSON.stringify(joystick1.value);
+  
+}
+
+function loop()
+{
+  requestAnimationFrame(loop);
+  value();
+  
+
+}
+
+
+
+function value()
+{
+  if (joystick1.value.x !=0 || joystick1.value.y !=0){
+    
+    console.log(joystick1.value);
+    console.log(4 +"s"+JSON.stringify(joystick1.value));
+    websocket.send("4s"+JSON.stringify(joystick1.value));
+    
+  }
+  
+}
+
+
+
+loop();
+
+    </script>
+</body>
+</html>
+)rawliteral";
+
+static esp_err_t index_handler(httpd_req_t *req){
+  httpd_resp_set_type(req, "text/html");
+  return httpd_resp_send(req, (const char *)INDEX_HTML, strlen(INDEX_HTML));
+}
+
+static esp_err_t stream_handler(httpd_req_t *req){
+  camera_fb_t * fb = NULL;
+  esp_err_t res = ESP_OK;
+  size_t _jpg_buf_len = 0;
+  uint8_t * _jpg_buf = NULL;
+  char * part_buf[64];
+
+  res = httpd_resp_set_type(req, _STREAM_CONTENT_TYPE);
+  if(res != ESP_OK){
+    return res;
+  }
+
+  while(true){
+    fb = esp_camera_fb_get();
+    if (!fb) {
+      Serial.println("Camera capture failed");
+      res = ESP_FAIL;
+    } else {
+      if(fb->width > 400){
+        if(fb->format != PIXFORMAT_JPEG){
+          bool jpeg_converted = frame2jpg(fb, 80, &_jpg_buf, &_jpg_buf_len);
+          esp_camera_fb_return(fb);
+          fb = NULL;
+          if(!jpeg_converted){
+            Serial.println("JPEG compression failed");
+            res = ESP_FAIL;
+          }
+        } else {
+          _jpg_buf_len = fb->len;
+          _jpg_buf = fb->buf;
+        }
+      }
+    }
+    if(res == ESP_OK){
+      size_t hlen = snprintf((char *)part_buf, 64, _STREAM_PART, _jpg_buf_len);
+      res = httpd_resp_send_chunk(req, (const char *)part_buf, hlen);
+    }
+    if(res == ESP_OK){
+      res = httpd_resp_send_chunk(req, (const char *)_jpg_buf, _jpg_buf_len);
+    }
+    if(res == ESP_OK){
+      res = httpd_resp_send_chunk(req, _STREAM_BOUNDARY, strlen(_STREAM_BOUNDARY));
+    }
+    if(fb){
+      esp_camera_fb_return(fb);
+      fb = NULL;
+      _jpg_buf = NULL;
+    } else if(_jpg_buf){
+      free(_jpg_buf);
+      _jpg_buf = NULL;
+    }
+    if(res != ESP_OK){
+      break;
+    }
+    //Serial.printf("MJPG: %uB\n",(uint32_t)(_jpg_buf_len));
+  }
+  return res;
+}
+
+static esp_err_t cmd_handler(httpd_req_t *req){
+  char*  buf;
+  size_t buf_len;
+  char variable[32] = {0,};
+  
+  buf_len = httpd_req_get_url_query_len(req) + 1;
+  if (buf_len > 1) {
+    buf = (char*)malloc(buf_len);
+    if(!buf){
+      httpd_resp_send_500(req);
+      return ESP_FAIL;
+    }
+    if (httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
+      if (httpd_query_key_value(buf, "go", variable, sizeof(variable)) == ESP_OK) {
+      } else {
+        free(buf);
+        httpd_resp_send_404(req);
+        return ESP_FAIL;
+      }
+    } else {
+      free(buf);
+      httpd_resp_send_404(req);
+      return ESP_FAIL;
+    }
+    free(buf);
+  } else {
+    httpd_resp_send_404(req);
+    return ESP_FAIL;
+  }
+
+  sensor_t * s = esp_camera_sensor_get();
+  int res = 0;
+   
+
+  if(res){
+    return httpd_resp_send_500(req);
+  }
+
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  return httpd_resp_send(req, NULL, 0);
+}
+
+
+
+
+void startCameraServer(){
+  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+  config.server_port = 80;
+  httpd_uri_t index_uri = {
+    .uri       = "/",
+    .method    = HTTP_GET,
+    .handler   = index_handler,
+    .user_ctx  = NULL
+  };
+
+  httpd_uri_t cmd_uri = {
+    .uri       = "/action",
+    .method    = HTTP_GET,
+    .handler   = cmd_handler,
+    .user_ctx  = NULL
+  };
+  httpd_uri_t stream_uri = {
+    .uri       = "/stream",
+    .method    = HTTP_GET,
+    .handler   = stream_handler,
+    .user_ctx  = NULL
+  };
+  if (httpd_start(&camera_httpd, &config) == ESP_OK) {
+    httpd_register_uri_handler(camera_httpd, &index_uri);
+    httpd_register_uri_handler(camera_httpd, &cmd_uri);
+  }
+  config.server_port += 2;
+  config.ctrl_port += 2;
+  if (httpd_start(&stream_httpd, &config) == ESP_OK) {
+    httpd_register_uri_handler(stream_httpd, &stream_uri);
+  }
+}
+
+
+
+void handleWebSocketMessage(uint8_t arg, uint8_t *data, size_t len) {
+    message = (char*)data;
+    if (message.indexOf("U") >= 0) {
+      //webSocket.sendTXT(arg, "Primljeno");
+      Serial.println(message);
+      Serial.println("Primljeno");
+
+    }
+    if (message.indexOf("top") >= 0) {
+      webSocket.sendTXT(arg, "Stajem");
+    }    
+    if (message.indexOf("4s") >= 0) {
+        Serial.println(message);
+        String Value = message.substring(2);
+        Serial.println(Value);
+        DeserializationError error = deserializeJson(doc, Value);
+        if (error) { // Print erro msg if incomig String is not JSON formated
+           Serial.print(F("deserializeJson() failed: "));
+           Serial.println(error.c_str());
+                     }
+         const float x = doc["x"]; // Float variable that holds temperature
+         const float y = doc["y"]; // Float variable that holds Humidity
+    // Print the received data for debugging
+            Serial.println(x);
+            Serial.println(y);
+    }
+
+    }
+  
+
+
+
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t len) {
+
+    switch(type) {
+        case WStype_DISCONNECTED:
+            Serial.printf("[%u] Disconnected!\n", num);
+            break;
+        case WStype_CONNECTED: {
+            IPAddress ip = webSocket.remoteIP(num);
+            Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);
+            socket_port = num;
+            // send message to client
+            webSocket.sendTXT(num, "Connected");
+        }
+            break;
+        case WStype_TEXT:{
+          handleWebSocketMessage(num, payload, len);
+   
+            }
+
+            break;
+    }
+}
+
+
+
+
+
+void setup() {
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
+  
+ 
+  Serial.begin(115200);
+  Serial.setDebugOutput(false);
+
+  Wifi();
+  
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_d0 = Y2_GPIO_NUM;
+  config.pin_d1 = Y3_GPIO_NUM;
+  config.pin_d2 = Y4_GPIO_NUM;
+  config.pin_d3 = Y5_GPIO_NUM;
+  config.pin_d4 = Y6_GPIO_NUM;
+  config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM;
+  config.pin_d7 = Y9_GPIO_NUM;
+  config.pin_xclk = XCLK_GPIO_NUM;
+  config.pin_pclk = PCLK_GPIO_NUM;
+  config.pin_vsync = VSYNC_GPIO_NUM;
+  config.pin_href = HREF_GPIO_NUM;
+  config.pin_sscb_sda = SIOD_GPIO_NUM;
+  config.pin_sscb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn = PWDN_GPIO_NUM;
+  config.pin_reset = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG; 
+  
+  if(psramFound()){
+    config.frame_size = FRAMESIZE_VGA;
+    config.jpeg_quality = 10;
+    config.fb_count = 2;
+  } else {
+    config.frame_size = FRAMESIZE_SVGA;
+    config.jpeg_quality = 12;
+    config.fb_count = 1;
+  }
+  
+  // Camera init
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("Camera init failed with error 0x%x", err);
+
+  }
+
+
+  // Start streaming web server
+  startCameraServer();
+  delay(100);
+  webSocket.begin();
+  webSocket.onEvent(webSocketEvent);  
+  delay(100);
+
+
+     
+
+
+  
+}
+
+void loop() {
+    
+    webSocket.loop();
+    
+    if (Serial.read()>0){
+      Primanje_vrijednosti_senzora();
+    }
+}
+
+void Primanje_vrijednosti_senzora(){
+  String Vrijednost = String(Serial.read());
+  webSocket.sendTXT(socket_port, Vrijednost);
+}
+
+void Wifi(){
+// Wi-Fi connection
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  
+  Serial.print("Camera Stream Ready! Go to: http://");
+  Serial.println(WiFi.localIP());
+  
+}
