@@ -5,23 +5,85 @@
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
 #include <ArduinoJson.h>
-#include <Arduino_JSON.h>
+//#include <Arduino_JSON.h>
+#include <WebSocketsServer.h>
+#include <ESPAsyncWebServer.h>
+#include <SpeedTrig.h>
 
-Adafruit_PWMServoDriver pwm1 = Adafruit_PWMServoDriver(0x40);   // Initiates library.
-Adafruit_PWMServoDriver pwm2 = Adafruit_PWMServoDriver(0x41);   // Initiates library.
+Adafruit_PWMServoDriver pwm2 = Adafruit_PWMServoDriver(0x40);   // Initiates library.
+Adafruit_PWMServoDriver pwm1 = Adafruit_PWMServoDriver(0x41);   // Initiates library.
+
+const char* ssid = "Patcho";
+const char* password = "12345678";
+
+uint8_t socket_port;
+String message = "";
+
+WebSocketsServer webSocket = WebSocketsServer(81);
+
 
 #define SERVOMIN  120  // Minimum pulse length count out of 4096.
 #define SERVOMAX  500 // Maximum pulse length count out of 4096.
 
-StaticJsonDocument<100> Senzor; // Allocate a static JSON document
-StaticJsonDocument<100> Kord; // Allocate a static JSON document
+StaticJsonDocument<300> Senzor; // Allocate a static JSON document
+StaticJsonDocument<300> Kord; // Allocate a static JSON document
+StaticJsonDocument<100> doc;
+StaticJsonDocument<200> Slider;
 
-float q_motora_naprijed_produljeni[3]={0,0,0};
-float q_motora_naprijed_skraceni[3]={0,0,0};
-float q_motora_nazad_produljeni[3]={0,0,0};
-float q_motora_nazad_skraceni[3]={0,0,0};
-float q_motora_srednji[3]={0,0,0};
+float q1_motora;
+float q2_motora;
+float q3_motora;
 
+//-----------Spremanje pozicije za pomicanje nogu unaprijed po elipsi-------------//
+float PozXEDp[53];//Za prednje noge
+float PozYEDp[53];
+float PozZEDp[53];
+
+float PozXEKp[53];//Za zadnje noge
+float PozYEKp[53];
+float PozZEKp[53];
+
+float PozXEs[53];
+float PozYEs[53];
+float PozZEs[53];
+
+float q1_motora_PrednjeNogeE[53];
+float q2_motora_PrednjeNogeE[53];
+float q3_motora_PrednjeNogeE[53];
+
+float q1_motora_SrednjeNogeE[53];
+float q2_motora_SrednjeNogeE[53];
+float q3_motora_SrednjeNogeE[53];
+
+float q1_motora_StraznjeNogeE[53];
+float q2_motora_StraznjeNogeE[53];
+float q3_motora_StraznjeNogeE[53];
+
+//-----------Spremanje pozicije za pomicanje tijela unaprijed po pravcu-------------//
+float PozXPDp[53];
+float PozYPDp[53];
+float PozZPDp[53];
+
+float PozXPKp[53];
+float PozYPKp[53];
+float PozZPKp[53];
+
+float PozXPs[53];
+float PozYPs[53];
+float PozZPs[53];
+
+float q1_motora_PrednjeNogeP[53];
+float q2_motora_PrednjeNogeP[53];
+float q3_motora_PrednjeNogeP[53];
+
+float q1_motora_SrednjeNogeP[53];
+float q2_motora_SrednjeNogeP[53];
+float q3_motora_SrednjeNogeP[53];
+
+float q1_motora_StraznjeNogeP[53];
+float q2_motora_StraznjeNogeP[53];
+float q3_motora_StraznjeNogeP[53];
+//------------------------------------------------------------------------------------//
 float brojnik_q1;
 float nazivnik_q1;
 float brojnik_q2;
@@ -29,195 +91,261 @@ float nazivnik_q2;
 float brojnik_q3;
 float nazivnik_q3;
 
-float X;
-float Y;
+float L1 = 46;
+float L2 = 89;
+float L3 = 148.5;
 
-String Orjentacija="Naprijed";
 
+float PozX;
+float PozY;
+float PozZ;
+
+
+float X1 = 80; //Naprijed
+float X2 = 80;
+float Y1 = 80; //Kuk u 8
+float Y2 = 20; // Kuk u 45
+float Z1 = -140;
+float Z2 = -40;
+
+float X1Z = 80;
+float X2Z = 80;
+float Y1Z = 29;
+float Y2Z = -29;
+
+float X1S = 80;
+float X2S = 80;
+float Y1S = 29;
+float Y2S = -29;
+
+
+int BrojSlidera;
+float VrijednostSlidera;
+String BrojNoge;
+String DioNoge;
+int Pinn;
+
+int DELAY = 7;
+String Orjentacija = "STOP";
+String StaraOrjentacija = "STOP";
+String Glide = "OFF";
 float Vrijednost_senzora;
-String Kordinate;
 
 
 //Prva Noga - prednja lijeva strana
-int Kuk_1 = 0;
-int Zglob_1 = 1;
-int Koljeno_1 = 2;
+int Kuk_1 = 13;
+int Zglob_1 = 14;
+int Koljeno_1 = 15;
 //Druga Noga - prednja desna strana - PWM 2, na drugoj pločici
-int Kuk_2 = 0;
-int Zglob_2 = 1;
-int Koljeno_2 = 2;
+int Kuk_2 = 4;
+int Zglob_2 = 5;
+int Koljeno_2 = 6;
 //Treca Noga - sredina lijeva strana
-int Kuk_3 = 3;
-int Zglob_3 = 4;
-int Koljeno_3 = 5;
+int Kuk_3 = 12;
+int Zglob_3 = 13;
+int Koljeno_3 = 14;
 //Cetvrta Noga - srednja desna strana - PWM 2, na drugoj pločici
-int Kuk_4 = 3;
-int Zglob_4 = 4;
-int Koljeno_4 = 5;
+int Kuk_4 = 0;
+int Zglob_4 = 1;
+int Koljeno_4 = 2;
 //Peta Noga - Zadnja lijeva strana
-int Kuk_5 = 6;
-int Zglob_5 = 7;
-int Koljeno_5 = 8;
+int Kuk_5 = 8;
+int Zglob_5 = 9;
+int Koljeno_5 = 10;
 //Sesta Noga - Zadnja desna strana - PWM 2, na drugoj pločici
-int Kuk_6 = 6;
-int Zglob_6 = 7;
-int Koljeno_6 = 8;
+int Kuk_6 = 0;
+int Zglob_6 = 1;
+int Koljeno_6 = 2;
 
-int Servo_senzora = 9; // PWM 1
+int Servo_senzora = 8; // PWM 1
 
 void setup() {
 
   Serial.begin(115200);
   pwm1.begin();         // Sends PWM signals.
   pwm1.setPWMFreq(50);  // Makes servos run at 60 Hz rate.
-  delay(20); 
+  delay(20);
   pwm2.begin();         // Sends PWM signals.
   pwm2.setPWMFreq(50);  // Makes servos run at 60 Hz rate.
   delay(20);
 
 
-  Nulti_korak();
+  Wifi();
+  webSocket.begin();
+  webSocket.onEvent(webSocketEvent);
+
+
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
 
-if (Serial.read()>0){
+  webSocket.loop();
 
-  Dolazne_poruke_Serial();
-  Provjera_koordinata(X,Y); // Provjeravaju se kordinate
-  InverznaKI_naprijed_produljeni(0,45,90,X,Y,0);
-  InverznaKI_nazad_produljeni(0,45,90,X,Y,0);
-  InverznaKI_naprijed_skraceni(0,45,90,X,Y,0);
-  InverznaKI_nazad_skraceni(0,45,90,X,Y,0);
-  
-    Prvi_korak(q_motora_naprijed_produljeni, q_motora_naprijed_skraceni, q_motora_nazad_produljeni, q_motora_nazad_skraceni, q_motora_srednji);
-    Drugi_korak(q_motora_naprijed_produljeni, q_motora_naprijed_skraceni, q_motora_nazad_produljeni, q_motora_nazad_skraceni, q_motora_srednji);
-  
-  if (Orjentacija == "Strogo desno"){
-    Strogo_desno(q_motora_naprijed_produljeni, q_motora_nazad_produljeni);
+  if (Orjentacija == "STOP") {
+
   }
-  else if (Orjentacija == "Strogo lijevo"){
-    Strogo_lijevo(q_motora_naprijed_produljeni, q_motora_nazad_produljeni);
+  else if (Orjentacija == "TrecaNoga" || Orjentacija == "PetaNoga") {
+    if (BrojSlidera == 3) {
+      ZakretMotoraPWM_35K(-VrijednostSlidera, Pinn);
+      Orjentacija = "STOP";
+    }
+    else {
+      ZakretMotoraPWM_356(VrijednostSlidera, Pinn);
+      Orjentacija = "STOP";
+    }
   }
-  else{
-    Prvi_korak(q_motora_naprijed_produljeni, q_motora_naprijed_skraceni, q_motora_nazad_produljeni, q_motora_nazad_skraceni, q_motora_srednji);
-    Drugi_korak(q_motora_naprijed_produljeni, q_motora_naprijed_skraceni, q_motora_nazad_produljeni, q_motora_nazad_skraceni, q_motora_srednji);
+  else if (Orjentacija == "SestaNoga") {
+    if (BrojSlidera == 3) {
+      ZakretMotoraPWM_6K(VrijednostSlidera, Pinn);
+      Orjentacija = "STOP";
+    }
+    else {
+      ZakretMotoraPWM_356(-VrijednostSlidera, Pinn);
+      Orjentacija = "STOP";
+    }
+  }
+  else if (Orjentacija == "DrugaNoga" || Orjentacija == "CetvrtaNoga") {
+    if (BrojSlidera == 3) {
+      ZakretMotoraPWM_24K(VrijednostSlidera, Pinn);
+      Orjentacija = "STOP";
+    }
+    else {
+      ZakretMotoraPWM_124(-VrijednostSlidera, Pinn);
+      Orjentacija = "STOP";
+    }
+  }
+  else if (Orjentacija == "PrvaNoga") {
+    if (BrojSlidera == 3) {
+      ZakretMotoraPWM_1K(-VrijednostSlidera, Pinn);
+      Orjentacija = "STOP";
+    }
+    else {
+      ZakretMotoraPWM_124(VrijednostSlidera, Pinn);
+      Orjentacija = "STOP";
+    }
+  }
+
+  else {
+
+    if (Orjentacija == "PocetniPolozaj") {
+      Nulti_korak();
+      Orjentacija = "STOP";
+    }
+    else {
+        if(Orjentacija != StaraOrjentacija){
+          if (Glide == "OFF"){
+              Racunanje(X1, X2, X1S, X2S, Y1, Y2, Y1S, Y2S, Z1, Z2);
+              StaraOrjentacija = Orjentacija;
+            }
+          else if (Glide == "ON"){
+              RacunanjeGlide(X1, X2, X1S, X2S, X1Z, X2Z, Y1, Y2, Y1S, Y2S, Y1Z, Y2Z, Z1, Z2);
+              StaraOrjentacija = Orjentacija;
+            }
+          else{
+              
+            }
+        }
+        else if (Orjentacija == StaraOrjentacija){
+        Kretanje_unaprijed();
+      }
+    }
   }
 }
 
 
-}
 
-void Nulti_korak(){
-  
-  InverznaKI_naprijed_produljeni(0,30,60,0.3,0,0);
-  
-  Prva_Noga(q_motora_naprijed_produljeni);
-  Cetvrta_Noga(q_motora_naprijed_produljeni);
-  Peta_Noga(q_motora_naprijed_produljeni);
-  
+void Nulti_korak() {
+  // Ovdje su svi motori stavljanei da se okrecu u pozitivnom smjeru, pa
+  // minus gdje je to znači da je pozitivan smjer za motor, ovakvim rasporedom
+  // se nebude zabio motor u pod, ili drugu susjednu nogu
 
-  Druga_Noga(q_motora_naprijed_produljeni);
-  Treca_Noga(q_motora_naprijed_produljeni);
-  Sesta_Noga(q_motora_naprijed_produljeni);
-  
-}
+  //Prednje noge
+  float prednja1Kuk = 25;
+  float prednja2Kuk = 25;
 
-void Dolazne_poruke_Serial(){
-  Kordinate = Serial.read();
-  if (Kordinate.indexOf("4s") >= 0) {
-        String Value = Kordinate.substring(2);
-        DeserializationError error = deserializeJson(Kord, Value);
-        if (error) { // Print erro msg if incomig String is not JSON formated
-           Serial.print(F("deserializeJson() failed: "));
-           Serial.println(error.c_str());
-                     }
-         X = Kord["x"]; // Float variable that holds temperature
-         Y = Kord["y"]; // Float variable that holds Humidity
-    // Print the received data for debugging
-            Serial.println(X);
-            Serial.println(Y);
-    
-}
-   if (Kordinate.indexOf("tp") >= 0) {
-    //Ako se traži da pauk stane
-   }
-   if (Kordinate.indexOf("U") >= 0) {
-    Ocitavanje(3,4);
-    Senzor["Lijevo"] = 1;
-    Senzor["Ispred"] = 2;
-    Senzor["Desno"] = 3;
-    serializeJson(Senzor, Serial);
-   }
-}
+  float prednja1Zglob = 33;
+  float prednja2Zglob = 33;
 
+  float prednja1Koljeno = 125;
+  float prednja2Koljeno = 125;
 
-void Provjera_koordinata(float x, float y){
+  //Srednje noge
+  float srednji3Kuk = 0;
+  float srednji4Kuk = 0;
+
+  float srednji3Zglob = 33;
+  float srednji4Zglob = 33;
+
+  float srednji3Koljeno = 105;
+  float srednji4Koljeno = 125;
+
+  //Zadnje noge
+  float zadnja5Kuk = 25;
+  float zadnja6Kuk = 25;
+
+  float zadnja5Zglob = 33;
+  float zadnja6Zglob = 33;
+
+  float zadnja5Koljeno = 125;
+  float zadnja6Koljeno = 125;
   
 
-  if (y>0.9){
-    Orjentacija = "Naprijed";
-    X=0.3;
-    Y=0.3;
-  }
-  if (0.9<y<0.2 && x>0){
-    Orjentacija = "Lagano desno";
-    X=0.3;
-    Y=map(y, 0.18, 0.29, 0, 1);
-  }
-  if (0.9<y<0.2 && x<0){
-    Orjentacija = "Lagano lijevo";
-    X=0.3;
-    Y=map(y, 0.31, 0.52, 0, 1);
-  }
-  if (y<-0.9){
-    Orjentacija = "Nazad";
-    X=0.3;
-    Y=0.3;
-  }
-  if (-0.2<y<-0.9 && x>0){
-    Orjentacija = "Nazad desno";
-    X=0.3;
-    Y=map(y, 0.18, 0.29, -1, 0);
-  }
-  if (-0.2<y<-0.9 && x<0){
-    Orjentacija = "Nazad lijevo";
-    X=0.3;
-    Y=map(y, 0.31, 0.52, -1, 0);
-  }
-  if (-0.2<y<0.2 && x>0){
-    Orjentacija = "Strogo desno";
-    X=0.3;
-    Y=0.3;
-  }
-  if (-0.2<y<0.2 && x<0){
-    Orjentacija = "Strogo lijevo";
-    X=0.3;
-    Y=0.3;
-  }
+  ZakretMotoraPWM_124(prednja1Zglob, Zglob_1);
+  ZakretMotoraPWM_124(-prednja2Zglob, Zglob_2);
+  delay(300);
+  ZakretMotoraPWM_356(srednji3Zglob, Zglob_3);
+  ZakretMotoraPWM_124(-srednji4Zglob, Zglob_4);
+  delay(300);
+  ZakretMotoraPWM_356(zadnja5Zglob, Zglob_5);
+  ZakretMotoraPWM_356(-zadnja6Zglob, Zglob_6);
+  delay(1000);
+  ZakretMotoraPWM_124(-prednja1Kuk, Kuk_1);
+  ZakretMotoraPWM_124(prednja2Kuk, Kuk_2);
+  ZakretMotoraPWM_356(srednji3Kuk, Kuk_3);
+  ZakretMotoraPWM_124(srednji4Kuk, Kuk_4);
+  ZakretMotoraPWM_356(zadnja5Kuk, Kuk_5);
+  ZakretMotoraPWM_356(-zadnja6Kuk, Kuk_6);
+  delay(1000);
+  ZakretMotoraPWM_1K(-prednja1Koljeno, Koljeno_1);
+  ZakretMotoraPWM_24K(prednja2Koljeno, Koljeno_2);
+  delay(100);
+  ZakretMotoraPWM_35K(-srednji3Koljeno, Koljeno_3);
+  ZakretMotoraPWM_24K(srednji4Koljeno, Koljeno_4);
+  delay(100);
+  ZakretMotoraPWM_35K(-zadnja5Koljeno, Koljeno_5);
+  ZakretMotoraPWM_6K(zadnja6Koljeno, Koljeno_6);
+  delay(1000);
 
 }
 
 
-void Ocitavanje(const int trigPin, const int echoPin){
-    
-        
-        ZakretMotoraPWM_135(0, Servo_senzora);
-        Vrijednost_senzora = Udaljenost(trigPin,echoPin);
-        //Senzor["Lijevo"] = Vrijednost_senzora;
-        Senzor["Lijevo"] = 1;
-        
-        ZakretMotoraPWM_135(90, Servo_senzora);
-        Vrijednost_senzora = Udaljenost(trigPin,echoPin);
-        //Senzor["Ispred"] = Vrijednost_senzora;
-        Senzor["Ispred"] = 2;
-        
-        ZakretMotoraPWM_135(180, Servo_senzora);
-        Vrijednost_senzora = Udaljenost(trigPin,echoPin);
-        //Senzor["Desno"] = Vrijednost_senzora;
-        Senzor["Desno"] = 3;
-        serializeJson(Senzor, Serial);
+void Ocitavanje(const int trigPin, const int echoPin) {
+
+
+  ZakretMotoraPWM_24K(0, Servo_senzora);
+  delay(300);
+  Vrijednost_senzora = Udaljenost(trigPin, echoPin);
+  Serial.println(Vrijednost_senzora);
+  delay(200);
+  Senzor["Desno"] = Vrijednost_senzora;
+
+  ZakretMotoraPWM_24K(180, Servo_senzora);
+  delay(300);
+  Vrijednost_senzora = Udaljenost(trigPin, echoPin);
+  Serial.println(Vrijednost_senzora);
+  delay(200);
+  Senzor["Lijevo"] = Vrijednost_senzora;
+
+  ZakretMotoraPWM_24K(90, Servo_senzora);
+  delay(300);
+  Vrijednost_senzora = Udaljenost(trigPin, echoPin);
+  Serial.println(Vrijednost_senzora);
+  delay(200);
+  Senzor["Ispred"] = Vrijednost_senzora;
+  
+  char dataa[150];
+  size_t len = serializeJson(Senzor, dataa);
+  webSocket.broadcastTXT(dataa, len);
 
 }
 
@@ -226,290 +354,1058 @@ float Udaljenost(const int trigPin, const int echoPin ) {
   long duration ;
   float distance;
   //define sound velocity in cm/uS
-  #define SOUND_VELOCITY 0.0343
+#define SOUND_VELOCITY 0.0343
   // put your main code here, to run repeatedly:
   pinMode(trigPin, OUTPUT); // Sets the trigPin as an Output
   pinMode(echoPin, INPUT);
- digitalWrite(trigPin, LOW);
+  digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
   // Sets the trigPin on HIGH state for 10 micro seconds
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
-  
+
   // Reads the echoPin, returns the sound wave travel time in microseconds
   duration = pulseIn(echoPin, HIGH);
-  
+
   // Calculate the distance
-  distance = (duration * SOUND_VELOCITY)/2;
-  
-  
- return distance;
+  distance = (duration * SOUND_VELOCITY) / 2;
+
+
+  return distance;
 }
 
 
-void Strogo_desno(float* q_naprijed_produljeni, float* q_nazad_produljeni){
+void Prva_Noga(float q1_naprijed, float q2_naprijed, float q3_naprijed) {
+
+  ZakretMotoraPWM_124(-q1_naprijed, Kuk_1); 
+  ZakretMotoraPWM_124(q2_naprijed, Zglob_1);
+  ZakretMotoraPWM_1K(-q3_naprijed, Koljeno_1);
+}
+
+void Druga_Noga(float q1_naprijed, float q2_naprijed, float q3_naprijed) {
+
+  ZakretMotoraPWM_124(q1_naprijed, Kuk_2);
+  ZakretMotoraPWM_124(-q2_naprijed, Zglob_2);
+  ZakretMotoraPWM_24K(q3_naprijed, Koljeno_2);
+}
+
+void Treca_Noga(float q1_naprijed, float q2_naprijed, float q3_naprijed) {
+
+  ZakretMotoraPWM_356(-q1_naprijed, Kuk_3);
+  ZakretMotoraPWM_356(q2_naprijed, Zglob_3);
+  ZakretMotoraPWM_35K(-q3_naprijed+20, Koljeno_3);
+}
+
+void Cetvrta_Noga(float q1_naprijed, float q2_naprijed, float q3_naprijed) {
+
+  ZakretMotoraPWM_124(q1_naprijed, Kuk_4);
+  ZakretMotoraPWM_124(-q2_naprijed, Zglob_4);
+  ZakretMotoraPWM_24K(q3_naprijed, Koljeno_4);
+}
+
+void Peta_Noga(float q1_naprijed, float q2_naprijed, float q3_naprijed) {
+
+
+  ZakretMotoraPWM_356(q1_naprijed, Kuk_5);
+  ZakretMotoraPWM_356(q2_naprijed, Zglob_5);
+  ZakretMotoraPWM_35K(-q3_naprijed-15, Koljeno_5);
+}
+
+void Sesta_Noga(float q1_naprijed, float q2_naprijed, float q3_naprijed) {
+
+
+  ZakretMotoraPWM_356(-q1_naprijed, Kuk_6);
+  ZakretMotoraPWM_356(-q2_naprijed, Zglob_6);
+  ZakretMotoraPWM_6K(q3_naprijed, Koljeno_6);
+}
+
+
+void Izracun(double x, double y, double z) {
+
+
+  brojnik_q1 = y;
+  nazivnik_q1 = x;
+
+  double c3 = (sq(x) + sq(y) + sq(z) - sq(L2) - sq(L3)) / (2 * L2 * L3);
+  if ((c3 <= -1) || (c3 >= 1)) {
+    Serial.println("Nevaljaju brojevi");
+  }
+  else {
+    nazivnik_q3 = c3;
+    double s3 = -sqrt(1 - (c3 * c3));
+    brojnik_q3 = s3;
+
+    brojnik_q2 = (L2 + L3 * c3) * z - L3 * s3 * sqrt((x * x) + (y * y));
+    nazivnik_q2 = (L2 + L3 * c3) * sqrt((x * x) + (y * y)) + L3 * s3 * z;
+  }
+  if (x < 0) {
+    q1_motora = -degrees(PI - SpeedTrig.atan2(brojnik_q1, nazivnik_q1));
+  }
+  else {
+    q1_motora = degrees(SpeedTrig.atan2(brojnik_q1, nazivnik_q1));
+  }
+  q2_motora = degrees(SpeedTrig.atan2(brojnik_q2, nazivnik_q2));
+  q3_motora = PI - degrees(SpeedTrig.atan2(brojnik_q3, nazivnik_q3));
+}
+
+
+void elipsa(double x1, double x2, double y1, double y2, double z1, double z2, double v, int t) {
+
+  double a = (y2 - y1) / 2;
+  double b = (z2 - z1) / 2;
+  double h = (y2 + y1) / 2;
+  double k = (z2 + z1) / 2;
+  double c = (x2 - x1) / 2;
+  double n = (x2 + x1) / 2;
+  int Maxt = 50;
+
+  PozY = a * v * cos(t * (PI / Maxt)) + h;
+  PozZ = b * v * sin(t * (PI / Maxt)) + k;
+
+
+  if (x2 - x1 == 0) {
+    PozX = x1;
+  }
+  else {
+    PozX = v * c * cos(t * (PI / Maxt)) + n;
+  }
+}
+
+void Pravac(double x1, double x2, double y1, double y2, double z1, double z2, float v, int t) {
+
+  double a = (y2 - y1) / 2;
+  double b = (z2 + z1) / 2;
+  double h = (y2 + y1) / 2;
+  double c = (x2 - x1) / 2;
+  double n = (x2 + x1) / 2;
+
+  int Maxt = 50;
+
+  PozY = a * v * cos(t * (PI / Maxt)) + h;
+  PozZ = b;
+
+
+  if (x2 - x1 == 0) {
+    PozX = x1;
+  }
+  else {
+    PozX = v * c * cos(t * (PI / Maxt)) + n;
+  }
+}
+
+void Kruznica(float r, float z1, float z2, float GornjaGranica, float DoljnjaGranica, float PomakPoX, float PomakPoY, float t) {
+  double b = (z2 + z1) / 2;
+  int Maxt = 50;
+
+  PozY = r * sin((t / Maxt) * (PI / 2) * radians(GornjaGranica) + radians(DoljnjaGranica)) + PomakPoY;
+  PozX = r * cos((t / Maxt) * (PI / 2) * radians(GornjaGranica) + radians(DoljnjaGranica)) + PomakPoX;
+  PozZ = b;
+}
+
+
+void ZakretMotoraPWM_1K(float ang, int servo) {
+  int pulse = map(ang, -180, 0, SERVOMIN, SERVOMAX);
+  pwm1.setPWM(servo, 0, pulse);
+}
+
+void ZakretMotoraPWM_35K(float ang, int servo) {
+  int pulse = map(ang, -180, 0, SERVOMIN, SERVOMAX);
+  pwm2.setPWM(servo, 0, pulse);
+}
+
+
+void ZakretMotoraPWM_6K(float ang, int servo) {
+  int pulse = map(ang, 0, 180, SERVOMIN, SERVOMAX);
+  pwm2.setPWM(servo, 0, pulse);
+}
+
+void ZakretMotoraPWM_24K(float ang, int servo) {
+  int pulse = map(ang, 0, 180, SERVOMIN, SERVOMAX);
+  pwm1.setPWM(servo, 0, pulse);
+}
+
+void ZakretMotoraPWM_124(float ang, int servo) {
+  int pulse = map(ang, -90, 90, SERVOMIN, SERVOMAX);
+  pwm1.setPWM(servo, 0, pulse);
+}
+
+void ZakretMotoraPWM_356(float ang, int servo) {
+  int pulse = map(ang, -90, 90, SERVOMIN, SERVOMAX);
+  pwm2.setPWM(servo, 0, pulse);
+}
+
+
+void Wifi() {
+  // Wi-Fi connection
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+
+  Serial.print("Go to: http://");
+  Serial.println(WiFi.localIP());
+
+}
+
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t len) {
+
+  switch (type) {
+    case WStype_DISCONNECTED:
+      Serial.printf("[%u]NodeMCU Disconnected!\n");
+      break;
+    case WStype_CONNECTED: {
+        webSocket.sendTXT(num, "NodeMCU Connected");
+        Serial.printf("NodeMCU Connected");
+        socket_port = num;
+      }
+      break;
+    case WStype_TEXT: {
+        handleWebSocketMessage(num, payload, len);
+      }
+
+      break;
+  }
+}
+
+void handleWebSocketMessage(uint8_t arg, uint8_t *data, size_t len) {
+  message = (char*)data;
+  if (message.indexOf("Values") >= 0) {
+    Ocitavanje(0, 2);
+  }
+  else if (message.indexOf("XX") >= 0) {
+    String Value = message.substring(2);
+    deserializeJson(Slider, Value);
+    Orjentacija = Slider["Orjentacija"].as<String>();
+    BrojSlidera = Slider["BrojSlidera"];
+    VrijednostSlidera = Slider["VrijednostSlidera"];
+    IzborNoge();
+    IzborDijelaNoge();
+    IzborPina();
+  }
+  else {
+    String Value = message.substring(2);
+    deserializeJson(Kord, Value);
+    DELAY = Kord["Delay"];
+    Z1 = Kord["Z1"];
+    Orjentacija = Kord["Orjentacija"].as<String>();
+    Glide = Kord["Glide"].as<String>();
+  }
+}
+
+float Skaliranje(float x, float in_min, float in_max, float out_min, float out_max) {
+  float nazivnik = (in_min - in_min) + out_min;
+  if (nazivnik == 0) {
+    nazivnik = 0.1;
+  }
+  return (x - in_min) * (out_max - out_min) / nazivnik;
+
+}
+void IzborDijelaNoge() {
+  if (BrojSlidera == 1) {
+    DioNoge = "Kuk_";
+  }
+  if (BrojSlidera == 2) {
+    DioNoge = "Zglob_";
+  }
+  if (BrojSlidera == 3) {
+    DioNoge = "Koljeno_";
+  }
+}
+
+void IzborNoge() {
+  if (Orjentacija == "PrvaNoga") {
+    BrojNoge = "1";
+  }
+  else if (Orjentacija == "DrugaNoga") {
+    BrojNoge = "2";
+  }
+  else if (Orjentacija == "TrecaNoga") {
+    BrojNoge = "3";
+  }
+  else if (Orjentacija == "CetvrtaNoga") {
+    BrojNoge = "4";
+  }
+  else if (Orjentacija == "PetaNoga") {
+    BrojNoge = "5";
+  }
+  else if (Orjentacija == "SestaNoga") {
+    BrojNoge = "6";
+  }
+  else {
+    BrojNoge = "0";
+  }
+}
+
+void IzborPina() {
+  if (DioNoge + BrojNoge == "Kuk_1") {
+    Pinn = Kuk_1;
+  }
+  else if (DioNoge + BrojNoge == "Kuk_2") {
+    Pinn = Kuk_2;
+  }
+  else if (DioNoge + BrojNoge == "Kuk_3") {
+    Pinn = Kuk_3;
+  }
+  else if (DioNoge + BrojNoge == "Kuk_4") {
+    Pinn = Kuk_4;
+  }
+  else if (DioNoge + BrojNoge == "Kuk_5") {
+    Pinn = Kuk_5;
+  }
+  else if (DioNoge + BrojNoge == "Kuk_6") {
+    Pinn = Kuk_6;
+  }
+  else if (DioNoge + BrojNoge == "Zglob_1") {
+    Pinn = Zglob_1;
+  }
+  else if (DioNoge + BrojNoge == "Zglob_2") {
+    Pinn = Zglob_2;
+  }
+  else if (DioNoge + BrojNoge == "Zglob_3") {
+    Pinn = Zglob_3;
+  }
+  else if (DioNoge + BrojNoge == "Zglob_4") {
+    Pinn = Zglob_4;
+  }
+  else if (DioNoge + BrojNoge == "Zglob_5") {
+    Pinn = Zglob_5;
+  }
+  else if (DioNoge + BrojNoge == "Zglob_6") {
+    Pinn = Zglob_6;
+  }
+  else if (DioNoge + BrojNoge == "Koljeno_1") {
+    Pinn = Koljeno_1;
+  }
+  else if (DioNoge + BrojNoge == "Koljeno_2") {
+    Pinn = Koljeno_2;
+  }
+  else if (DioNoge + BrojNoge == "Koljeno_3") {
+    Pinn = Koljeno_3;
+  }
+  else if (DioNoge + BrojNoge == "Koljeno_4") {
+    Pinn = Koljeno_4;
+  }
+  else if (DioNoge + BrojNoge == "Koljeno_5") {
+    Pinn = Koljeno_5;
+  }
+  else if (DioNoge + BrojNoge == "Koljeno_6") {
+    Pinn = Koljeno_6;
+  }
+}
+
+void Kretanje_unaprijed() {
   
-  ZakretMotoraPWM_135(q_naprijed_produljeni[1]+30,Zglob_1);
-  ZakretMotoraPWM_246(q_naprijed_produljeni[1]+30,Zglob_4);
-  ZakretMotoraPWM_135(q_naprijed_produljeni[1]+30,Zglob_5);
-  
-  delay(100);
-  Prva_Noga(q_naprijed_produljeni);
-  Cetvrta_Noga(q_naprijed_produljeni);
-  Peta_Noga(q_naprijed_produljeni);
+
+
+  for (int i = 0; i <= 100; i++) {
+    if (Orjentacija == "STOP") {
+      break;
+    }
+    if ((0 <= i) && (i <= 50)) {
+      Serial.print("-------Naprijed_Zglob_1----------------");
+      Serial.print("i=");
+      Serial.println(i);
+
+      Serial.println("---1---");
+      Serial.println(q1_motora_PrednjeNogeE[50-i]);
+      Serial.println(q2_motora_PrednjeNogeE[50-i]);
+      Serial.println(q3_motora_PrednjeNogeE[50-i]);
+      Serial.println("---4---");
+      Serial.println(q1_motora_SrednjeNogeE[i]);
+      Serial.println(q2_motora_SrednjeNogeE[i]);
+      Serial.println(q3_motora_SrednjeNogeE[i]);
+      Serial.println("---5---");
+      Serial.println(q1_motora_PrednjeNogeE[i]);
+      Serial.println(q2_motora_PrednjeNogeE[i]);
+      Serial.println(q3_motora_PrednjeNogeE[i]);
+
+      if (Orjentacija == "lijevo" && Glide == "OFF") {
+
+      }
+      else if (Orjentacija == "Nazad desno" && Glide == "OFF") {
+        Prva_Noga(q1_motora_PrednjeNogeE[50-i], q2_motora_PrednjeNogeE[50-i], q3_motora_PrednjeNogeE[50-i]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeE[i], q2_motora_SrednjeNogeE[i], q3_motora_SrednjeNogeE[i]);
+        Peta_Noga(q1_motora_PrednjeNogeE[i], q2_motora_PrednjeNogeE[i], q3_motora_PrednjeNogeE[i]);
+      }
+      else if (Orjentacija == "Nazad lijevo" && Glide == "OFF") {
+        Prva_Noga(q1_motora_StraznjeNogeE[i], q2_motora_StraznjeNogeE[i], q3_motora_StraznjeNogeE[i]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeE[i], q2_motora_SrednjeNogeE[i], q3_motora_SrednjeNogeE[i]);
+        Peta_Noga(q1_motora_StraznjeNogeE[50 - i], q2_motora_StraznjeNogeE[50 - i], q3_motora_StraznjeNogeE[50 - i]);
+      }
+      else if (Orjentacija == "Lagano lijevo" && Glide == "OFF") {
+        Prva_Noga(q1_motora_StraznjeNogeE[50-i], q2_motora_StraznjeNogeE[50-i], q3_motora_StraznjeNogeE[50-i]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeE[i], q2_motora_SrednjeNogeE[i], q3_motora_SrednjeNogeE[i]);
+        Peta_Noga(q1_motora_StraznjeNogeE[i], q2_motora_StraznjeNogeE[i], q3_motora_StraznjeNogeE[i]);
+      }
+      else if (Orjentacija == "Lagano desno" && Glide == "OFF") { //Lagano desno
+        Prva_Noga(q1_motora_PrednjeNogeE[i], q2_motora_PrednjeNogeE[i], q3_motora_PrednjeNogeE[i]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeE[i], q2_motora_SrednjeNogeE[i], q3_motora_SrednjeNogeE[i]);
+        Peta_Noga(q1_motora_PrednjeNogeE[50-i], q2_motora_PrednjeNogeE[50-i], q3_motora_PrednjeNogeE[50-i]);
+      }
+      else if (Orjentacija == "Strogo lijevo" && Glide == "OFF") {
+        Prva_Noga(q1_motora_PrednjeNogeE[50-i], q2_motora_PrednjeNogeE[50-i], q3_motora_PrednjeNogeE[50-i]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeE[i], q2_motora_SrednjeNogeE[i], q3_motora_SrednjeNogeE[i]);
+        Peta_Noga(q1_motora_PrednjeNogeE[i], q2_motora_PrednjeNogeE[i], q3_motora_PrednjeNogeE[i]);
+      }
+      else if (Orjentacija == "Strogo desno" && Glide == "OFF") {
+        Prva_Noga(q1_motora_PrednjeNogeE[i], q2_motora_PrednjeNogeE[i], q3_motora_PrednjeNogeE[i]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeE[50-i], q2_motora_SrednjeNogeE[50-i], q3_motora_SrednjeNogeE[50-i]);
+        Peta_Noga(q1_motora_PrednjeNogeE[50-i], q2_motora_PrednjeNogeE[50-i], q3_motora_PrednjeNogeE[50-i]);
+      }
+      else if((Orjentacija == "Nazad lijevo" || Orjentacija == "Lagano desno") && Glide == "ON"){
+        Prva_Noga(q1_motora_PrednjeNogeE[i], q2_motora_PrednjeNogeE[i], q3_motora_PrednjeNogeE[i]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeE[i], q2_motora_SrednjeNogeE[i], q3_motora_SrednjeNogeE[i]);
+        Peta_Noga(q1_motora_StraznjeNogeE[50-i], q2_motora_StraznjeNogeE[50-i], q3_motora_StraznjeNogeE[50-i]);
+      }
+      else if((Orjentacija == "Lagano lijevo" || Orjentacija == "Nazad desno") && Glide == "ON"){
+        Prva_Noga(q1_motora_StraznjeNogeE[i], q2_motora_StraznjeNogeE[i], q3_motora_StraznjeNogeE[i]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeE[i], q2_motora_SrednjeNogeE[i], q3_motora_SrednjeNogeE[i]);
+        Peta_Noga(q1_motora_PrednjeNogeE[50-i], q2_motora_PrednjeNogeE[50-i], q3_motora_PrednjeNogeE[50-i]);
+      }
+      else if((Orjentacija == "Strogo lijevo" || Orjentacija == "Strogo desno") && Glide == "ON"){
+        Prva_Noga(q1_motora_PrednjeNogeE[i], q2_motora_PrednjeNogeE[i], q3_motora_PrednjeNogeE[i]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeE[i], q2_motora_SrednjeNogeE[i], q3_motora_SrednjeNogeE[i]);
+        Peta_Noga(q1_motora_StraznjeNogeE[i], q2_motora_StraznjeNogeE[i], q3_motora_StraznjeNogeE[i]);
+      }
+      else {
+        Prva_Noga(q1_motora_PrednjeNogeE[i], q2_motora_PrednjeNogeE[i], q3_motora_PrednjeNogeE[i]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeE[i], q2_motora_SrednjeNogeE[i], q3_motora_SrednjeNogeE[i]);
+        Peta_Noga(q1_motora_StraznjeNogeE[i], q2_motora_StraznjeNogeE[i], q3_motora_StraznjeNogeE[i]);
+      }
+
+      delay(DELAY);
+    }
+    if ((0 <= i) && (i <= 50)) {
+      Serial.print("-------Povrat_Zglob_2----------------");
+      Serial.print("i=");
+      Serial.println(i);
+      int t = 50 - i;
+
+//      Serial.println("---2---");
+//      Serial.println(q1_motora_StražnjeNogeP[t]);
+//      Serial.println(q2_motora_StražnjeNogeP[t]);
+//      Serial.println(q3_motora_StražnjeNogeP[t]);
+//      Serial.println("---3---");
+//      Serial.println(q1_motora_SrednjeNogeP[t]);//Puta 2 za skretanje udesno i ulijevo
+//      Serial.println(q2_motora_SrednjeNogeP[t]);
+//      Serial.println(q3_motora_SrednjeNogeP[t]);
+//      Serial.println("---6---");
+//      Serial.println(q1_motora_StražnjeNogeP[50-t]);
+//      Serial.println(q2_motora_StražnjeNogeP[50-t]);
+//      Serial.println(q3_motora_StražnjeNogeP[50-t]);
+
+
+      if (Orjentacija == "lijevo" && Glide == "OFF") { //Pomicanje unaprijed
+
+      }
+      else if(Orjentacija == "Nazad desno" && Glide == "OFF"){
+        Druga_Noga(q1_motora_StraznjeNogeP[t], q2_motora_StraznjeNogeP[t], q3_motora_StraznjeNogeP[t]);
+        Treca_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Sesta_Noga(q1_motora_StraznjeNogeP[50-t], q2_motora_StraznjeNogeP[50-t], q3_motora_StraznjeNogeP[50-t]);
+      }
+      else if (Orjentacija == "Nazad lijevo" && Glide == "OFF") {
+        Druga_Noga(q1_motora_PrednjeNogeP[50 - t], q2_motora_PrednjeNogeP[50 - t], q3_motora_PrednjeNogeP[50 - t]);
+        Treca_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Sesta_Noga(q1_motora_PrednjeNogeP[t], q2_motora_PrednjeNogeP[t], q3_motora_PrednjeNogeP[t]);
+      }
+      else if(Orjentacija == "Lagano lijevo" && Glide == "OFF"){
+        Druga_Noga(q1_motora_PrednjeNogeP[t], q2_motora_PrednjeNogeP[t], q3_motora_PrednjeNogeP[t]);
+        Treca_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Sesta_Noga(q1_motora_PrednjeNogeP[50-t], q2_motora_PrednjeNogeP[50-t], q3_motora_PrednjeNogeP[50-t]);
+      }
+      else if(Orjentacija == "Lagano desno" && Glide == "OFF"){
+        Druga_Noga(q1_motora_StraznjeNogeP[50-t], q2_motora_StraznjeNogeP[50-t], q3_motora_StraznjeNogeP[50-t]);
+        Treca_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Sesta_Noga(q1_motora_StraznjeNogeP[t], q2_motora_StraznjeNogeP[t], q3_motora_StraznjeNogeP[t]);
+      }
+      else if(Orjentacija == "Strogo lijevo" && Glide == "OFF"){
+        Druga_Noga(q1_motora_StraznjeNogeP[50-t], q2_motora_StraznjeNogeP[50-t], q3_motora_StraznjeNogeP[50-t]);
+        Treca_Noga(q1_motora_SrednjeNogeP[50-t], q2_motora_SrednjeNogeP[50-t], q3_motora_SrednjeNogeP[50-t]);
+        Sesta_Noga(q1_motora_StraznjeNogeP[t], q2_motora_StraznjeNogeP[t], q3_motora_StraznjeNogeP[t]);
+      }
+      else if(Orjentacija == "Strogo desno" && Glide == "OFF"){
+        Druga_Noga(q1_motora_StraznjeNogeP[t], q2_motora_StraznjeNogeP[t], q3_motora_StraznjeNogeP[t]);
+        Treca_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Sesta_Noga(q1_motora_StraznjeNogeP[50-t], q2_motora_StraznjeNogeP[50-t], q3_motora_StraznjeNogeP[50-t]);
+      }
+      else if((Orjentacija == "Nazad lijevo" || Orjentacija == "Lagano desno") && Glide == "ON"){
+        Druga_Noga(q1_motora_StraznjeNogeP[t], q2_motora_StraznjeNogeP[t], q3_motora_StraznjeNogeP[t]);
+        Treca_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Sesta_Noga(q1_motora_PrednjeNogeP[50-t], q2_motora_PrednjeNogeP[50-t], q3_motora_PrednjeNogeP[50-t]);
+      }
+      else if((Orjentacija == "Lagano lijevo" || Orjentacija == "Nazad desno") && Glide == "ON"){
+        Druga_Noga(q1_motora_PrednjeNogeP[t], q2_motora_PrednjeNogeP[t], q3_motora_PrednjeNogeP[t]);
+        Treca_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Sesta_Noga(q1_motora_StraznjeNogeP[50-t], q2_motora_StraznjeNogeP[50-t], q3_motora_StraznjeNogeP[50-t]);
+      }
+      else if((Orjentacija == "Strogo lijevo" || Orjentacija == "Strogo desno") && Glide == "ON"){
+        Druga_Noga(q1_motora_StraznjeNogeP[50-t], q2_motora_StraznjeNogeP[50-t], q3_motora_StraznjeNogeP[50-t]);
+        Treca_Noga(q1_motora_SrednjeNogeP[50-t], q2_motora_SrednjeNogeP[50-t], q3_motora_SrednjeNogeP[50-t]);
+        Sesta_Noga(q1_motora_PrednjeNogeP[50-t], q2_motora_PrednjeNogeP[50-t], q3_motora_PrednjeNogeP[50-t]);
+      }
+      else {
+        Druga_Noga(q1_motora_PrednjeNogeP[t], q2_motora_PrednjeNogeP[t], q3_motora_PrednjeNogeP[t]);
+        Treca_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Sesta_Noga(q1_motora_StraznjeNogeP[t], q2_motora_StraznjeNogeP[t], q3_motora_StraznjeNogeP[t]);
+      }
+
+      delay(DELAY);
+
+    }
+    if ((50 <= i) && (i <= 100)) {
+      Serial.print("-------Naprijed_Zglob_2----------------");
+      Serial.print("i=");
+      Serial.println(i);
+      int t = i - 50;
+//      Serial.println("---2---");
+//      Serial.println(q1_motora_StražnjeNogeE[t]);
+//      Serial.println(q2_motora_StražnjeNogeE[t]);
+//      Serial.println(q3_motora_StražnjeNogeE[t]);
+//      Serial.println("---3---");
+//      Serial.println(q1_motora_SrednjeNogeE[t]);//Puta 2 za skretanje udesno i ulijevo
+//      Serial.println(q2_motora_SrednjeNogeE[t]);
+//      Serial.println(q3_motora_SrednjeNogeE[t]);
+//      Serial.println("---6---");
+//      Serial.println(q1_motora_StražnjeNogeE[50-t]);
+//      Serial.println(q2_motora_StražnjeNogeE[50-t]);
+//      Serial.println(q3_motora_StražnjeNogeE[50-t]);
+//      Serial.println(q1_motora_StražnjeNogeE[t]);
+//      Serial.println(q2_motora_StražnjeNogeE[t]);
+//      Serial.println(q3_motora_StražnjeNogeE[t]);
+
+
+      if(Orjentacija == "Nazad desno" && Glide == "OFF"){
+        Druga_Noga(q1_motora_StraznjeNogeE[t], q2_motora_StraznjeNogeE[t], q3_motora_StraznjeNogeE[t]);
+        Treca_Noga(q1_motora_SrednjeNogeE[t], q2_motora_SrednjeNogeE[t], q3_motora_SrednjeNogeE[t]);
+        Sesta_Noga(q1_motora_StraznjeNogeE[50-t], q2_motora_StraznjeNogeE[50-t], q3_motora_StraznjeNogeE[50-t]);
+      } 
+      else if (Orjentacija == "Nazad lijevo" && Glide == "OFF") {
+        Druga_Noga(q1_motora_PrednjeNogeE[50-t], q2_motora_PrednjeNogeE[50 - t], q3_motora_PrednjeNogeE[50 - t]);
+        Treca_Noga(q1_motora_SrednjeNogeE[t], q2_motora_SrednjeNogeE[t], q3_motora_SrednjeNogeE[t]);
+        Sesta_Noga(q1_motora_PrednjeNogeE[t], q2_motora_PrednjeNogeE[t], q3_motora_PrednjeNogeE[t]);
+      }
+      else if(Orjentacija == "Lagano lijevo" && Glide == "OFF"){
+        Druga_Noga(q1_motora_PrednjeNogeE[t], q2_motora_PrednjeNogeE[t], q3_motora_PrednjeNogeE[t]);
+        Treca_Noga(q1_motora_SrednjeNogeE[t], q2_motora_SrednjeNogeE[t], q3_motora_SrednjeNogeE[t]);
+        Sesta_Noga(q1_motora_PrednjeNogeE[50-t], q2_motora_PrednjeNogeE[50-t], q3_motora_PrednjeNogeE[50-t]);
+      }
+      else if(Orjentacija == "Lagano desno" && Glide == "OFF"){
+        Druga_Noga(q1_motora_StraznjeNogeE[50-t], q2_motora_StraznjeNogeE[50-t], q3_motora_StraznjeNogeE[50-t]);
+        Treca_Noga(q1_motora_SrednjeNogeE[t], q2_motora_SrednjeNogeE[t], q3_motora_SrednjeNogeE[t]);
+        Sesta_Noga(q1_motora_StraznjeNogeE[t], q2_motora_StraznjeNogeE[t], q3_motora_StraznjeNogeE[t]);
+      }     
+      else if(Orjentacija == "Strogo lijevo" && Glide == "OFF"){
+        Druga_Noga(q1_motora_StraznjeNogeE[50-t], q2_motora_StraznjeNogeE[50-t], q3_motora_StraznjeNogeE[50-t]);
+        Treca_Noga(q1_motora_SrednjeNogeE[50-t], q2_motora_SrednjeNogeE[50-t], q3_motora_SrednjeNogeE[50-t]);
+        Sesta_Noga(q1_motora_StraznjeNogeE[t], q2_motora_StraznjeNogeE[t], q3_motora_StraznjeNogeE[t]);
+      }
+      else if(Orjentacija == "Strogo desno" && Glide == "OFF"){
+        Druga_Noga(q1_motora_StraznjeNogeE[t], q2_motora_StraznjeNogeE[t], q3_motora_StraznjeNogeE[t]);
+        Treca_Noga(q1_motora_SrednjeNogeE[t], q2_motora_SrednjeNogeE[t], q3_motora_SrednjeNogeE[t]);
+        Sesta_Noga(q1_motora_StraznjeNogeE[50-t], q2_motora_StraznjeNogeE[50-t], q3_motora_StraznjeNogeE[50-t]);
+      }
+      else if((Orjentacija == "Nazad lijevo" || Orjentacija == "Lagano desno") && Glide == "ON"){
+        Druga_Noga(q1_motora_StraznjeNogeE[t], q2_motora_StraznjeNogeE[t], q3_motora_StraznjeNogeE[t]);
+        Treca_Noga(q1_motora_SrednjeNogeE[t], q2_motora_SrednjeNogeE[t], q3_motora_SrednjeNogeE[t]);
+        Sesta_Noga(q1_motora_PrednjeNogeE[50-t], q2_motora_PrednjeNogeE[50-t], q3_motora_PrednjeNogeE[50-t]);
+      }
+      else if((Orjentacija == "Lagano lijevo" || Orjentacija == "Nazad desno") && Glide == "ON"){
+        Druga_Noga(q1_motora_PrednjeNogeE[t], q2_motora_PrednjeNogeE[t], q3_motora_PrednjeNogeE[t]);
+        Treca_Noga(q1_motora_SrednjeNogeE[t], q2_motora_SrednjeNogeE[t], q3_motora_SrednjeNogeE[t]);
+        Sesta_Noga(q1_motora_StraznjeNogeE[50-t], q2_motora_StraznjeNogeE[50-t], q3_motora_StraznjeNogeE[50-t]);        
+      }
+      else if((Orjentacija == "Strogo lijevo" || Orjentacija == "Strogo desno") && Glide == "ON"){
+        Druga_Noga(q1_motora_StraznjeNogeE[50-t], q2_motora_StraznjeNogeE[50-t], q3_motora_StraznjeNogeE[50-t]);
+        Treca_Noga(q1_motora_SrednjeNogeE[50-t], q2_motora_SrednjeNogeE[50-t], q3_motora_SrednjeNogeE[50-t]);
+        Sesta_Noga(q1_motora_PrednjeNogeE[50-t], q2_motora_PrednjeNogeE[50-t], q3_motora_PrednjeNogeE[50-t]);
+      }
+      else {
+        Druga_Noga(q1_motora_PrednjeNogeE[t], q2_motora_PrednjeNogeE[t], q3_motora_PrednjeNogeE[t]);
+        Treca_Noga(q1_motora_SrednjeNogeE[t], q2_motora_SrednjeNogeE[t], q3_motora_SrednjeNogeE[t]);
+        Sesta_Noga(q1_motora_StraznjeNogeE[t], q2_motora_StraznjeNogeE[t], q3_motora_StraznjeNogeE[t]);
+      }
+
+      delay(DELAY);
+    }
+    if ((50 <= i) && (i <= 100)) {
+      Serial.print("-------Povrat_Zglob_1----------------");
+      Serial.print("i=");
+      Serial.println(i);
+      int t = 100 - i;
+
+      Serial.println("---1---");
+//      Serial.println(q1_motora_PrednjeNogeP[t]);
+//      Serial.println(q2_motora_PrednjeNogeP[t]);
+//      Serial.println(q3_motora_PrednjeNogeP[t]);
+      Serial.println(q1_motora_PrednjeNogeP[50-t]);
+      Serial.println(q2_motora_PrednjeNogeP[50-t]);
+      Serial.println(q3_motora_PrednjeNogeP[50-t]);
+      Serial.println("---4---");
+      Serial.println(q1_motora_SrednjeNogeP[t]);
+      Serial.println(q2_motora_SrednjeNogeP[t]);
+      Serial.println(q3_motora_SrednjeNogeP[t]);
+      Serial.println("---5---");
+      Serial.println(q1_motora_PrednjeNogeP[t]);
+      Serial.println(q2_motora_PrednjeNogeP[t]);
+      Serial.println(q3_motora_PrednjeNogeP[t]);
+
+
+      if(Orjentacija == "Nazad desno" && Glide == "OFF"){
+        Prva_Noga(q1_motora_PrednjeNogeP[50-t], q2_motora_PrednjeNogeP[50-t], q3_motora_PrednjeNogeP[50-t]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Peta_Noga(q1_motora_PrednjeNogeP[t], q2_motora_PrednjeNogeP[t], q3_motora_PrednjeNogeP[t]);
+      } 
+      else if (Orjentacija == "Nazad lijevo" && Glide == "OFF") {
+        Prva_Noga(q1_motora_StraznjeNogeP[t], q2_motora_StraznjeNogeP[t], q3_motora_StraznjeNogeP[t]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Peta_Noga(q1_motora_StraznjeNogeP[50-t], q2_motora_StraznjeNogeP[50-t], q3_motora_StraznjeNogeP[50-t]);
+      }
+      else if(Orjentacija == "Lagano lijevo" && Glide == "OFF"){
+        Prva_Noga(q1_motora_StraznjeNogeP[50-t], q2_motora_StraznjeNogeP[50-t], q3_motora_StraznjeNogeP[50-t]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Peta_Noga(q1_motora_StraznjeNogeP[t], q2_motora_StraznjeNogeP[t], q3_motora_StraznjeNogeP[t]);
+      }
+      else if(Orjentacija == "Lagano desno" && Glide == "OFF"){
+        Prva_Noga(q1_motora_PrednjeNogeP[t], q2_motora_PrednjeNogeP[t], q3_motora_PrednjeNogeP[t]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Peta_Noga(q1_motora_PrednjeNogeP[50-t], q2_motora_PrednjeNogeP[50-t], q3_motora_PrednjeNogeP[50-t]);
+      }
+      else if(Orjentacija == "Strogo lijevo" && Glide == "OFF"){
+        Prva_Noga(q1_motora_PrednjeNogeP[50-t], q2_motora_PrednjeNogeP[50-t], q3_motora_PrednjeNogeP[50-t]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Peta_Noga(q1_motora_PrednjeNogeP[t], q2_motora_PrednjeNogeP[t], q3_motora_PrednjeNogeP[t]);
+      } 
+      else if(Orjentacija == "Strogo desno" && Glide == "OFF"){
+        Prva_Noga(q1_motora_PrednjeNogeP[t], q2_motora_PrednjeNogeP[t], q3_motora_PrednjeNogeP[t]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeP[50-t], q2_motora_SrednjeNogeP[50-t], q3_motora_SrednjeNogeP[50-t]);
+        Peta_Noga(q1_motora_PrednjeNogeP[50-t], q2_motora_PrednjeNogeP[50-t], q3_motora_PrednjeNogeP[50-t]);
+      }        
+      else if((Orjentacija == "Nazad lijevo" || Orjentacija == "Lagano desno") && Glide == "ON"){
+        Prva_Noga(q1_motora_PrednjeNogeP[t], q2_motora_PrednjeNogeP[t], q3_motora_PrednjeNogeP[t]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Peta_Noga(q1_motora_StraznjeNogeP[50-t], q2_motora_StraznjeNogeP[50-t], q3_motora_StraznjeNogeP[50-t]);
+      }
+      else if((Orjentacija == "Lagano lijevo" || Orjentacija == "Nazad desno") && Glide == "ON"){
+        Prva_Noga(q1_motora_StraznjeNogeP[t], q2_motora_StraznjeNogeP[t], q3_motora_StraznjeNogeP[t]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Peta_Noga(q1_motora_PrednjeNogeP[50-t], q2_motora_PrednjeNogeP[50-t], q3_motora_PrednjeNogeP[50-t]); 
+      }
+      else if((Orjentacija == "Strogo lijevo" || Orjentacija == "Strogo desno") && Glide == "ON"){
+        Prva_Noga(q1_motora_StraznjeNogeP[t], q2_motora_StraznjeNogeP[t], q3_motora_StraznjeNogeP[t]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Peta_Noga(q1_motora_PrednjeNogeP[t], q2_motora_PrednjeNogeP[t], q3_motora_PrednjeNogeP[t]);
+      }
+      else {
+        Prva_Noga(q1_motora_PrednjeNogeP[t], q2_motora_PrednjeNogeP[t], q3_motora_PrednjeNogeP[t]);
+        Cetvrta_Noga(q1_motora_SrednjeNogeP[t], q2_motora_SrednjeNogeP[t], q3_motora_SrednjeNogeP[t]);
+        Peta_Noga(q1_motora_StraznjeNogeP[t], q2_motora_StraznjeNogeP[t], q3_motora_StraznjeNogeP[t]);
+      }
+
+      delay(DELAY);
+      Serial.print("-------KRAJ----------------");
+    }
+
+
+  }
+
+}
+//----------------------------------------------------------MATEMATIKA-------------------------------------------------------------------------------//
+//----------------------------------------------------------MATEMATIKA-------------------------------------------------------------------------------//
+//----------------------------------------------------------MATEMATIKA-------------------------------------------------------------------------------//
+//----------------------------------------------------------MATEMATIKA-------------------------------------------------------------------------------//
+//----------------------------------------------------------MATEMATIKA-------------------------------------------------------------------------------//
+void Racunanje(double x1, double x2, double x1s, double x2s, double y1, double y2, double y1s, double y2s, double z1, double z2) {
+
+
+
+  if (Orjentacija == "Strogo lijevo" || Orjentacija == "Strogo desno") {
+    x1 = 69;
+    x2 = 42;
+    x1s = 80;
+    x2s = 80;
+
+    y1 = 40;
+    y2 = 80;
+    y1s = 40;
+    y2s = -40;
+
+  }
+  else if (Orjentacija == "Nazad") {
+    x2 = 70;
+    x1 = 70;
+    x2s = 70;
+    x1s = 70;
     
-  //Povlacenje
-  
-  Druga_Noga(q_nazad_produljeni);
-  Treca_Noga(q_nazad_produljeni);
-  Sesta_Noga(q_nazad_produljeni);
 
-  delay(100);
-  ZakretMotoraPWM_135(q_naprijed_produljeni[1],Zglob_1);
-  ZakretMotoraPWM_246(q_naprijed_produljeni[1],Zglob_4);
-  ZakretMotoraPWM_135(q_naprijed_produljeni[1],Zglob_5);
-}
-
-void Strogo_lijevo(float* q_naprijed_produljeni, float* q_nazad_produljeni){
-  
-  ZakretMotoraPWM_246(q_naprijed_produljeni[1]+10,Zglob_2);
-  ZakretMotoraPWM_135(q_naprijed_produljeni[1]+10,Zglob_3);
-  ZakretMotoraPWM_246(q_naprijed_produljeni[1]+10,Zglob_6);
-  delay(300);
-
-  Druga_Noga(q_naprijed_produljeni);
-  Treca_Noga(q_naprijed_produljeni);
-  Sesta_Noga(q_naprijed_produljeni);
-  
-  //Povlacenje
-  
-  Prva_Noga(q_nazad_produljeni);
-  Cetvrta_Noga(q_nazad_produljeni);
-  Peta_Noga(q_nazad_produljeni);
-
-  delay(300);
-  ZakretMotoraPWM_246(q_naprijed_produljeni[1],Zglob_2);
-  ZakretMotoraPWM_135(q_naprijed_produljeni[1],Zglob_3);
-  ZakretMotoraPWM_246(q_naprijed_produljeni[1],Zglob_6);
-}
-
-void Drugi_korak(float* q_naprijed_produljeni, float* q_naprijed_skraceni,float* q_nazad_produljeni,float* q_nazad_skraceni, float* q_srednji){
-
-  ZakretMotoraPWM_246(q_naprijed_produljeni[1]+30,Zglob_2);
-  ZakretMotoraPWM_135(q_srednji[1]+30,Zglob_3);
-  ZakretMotoraPWM_246(q_naprijed_skraceni[1]+30,Zglob_6);
-  delay(300);
-
-  Druga_Noga(q_naprijed_produljeni);
-  Treca_Noga(q_srednji);
-  Sesta_Noga(q_naprijed_skraceni);
-  
-  //Povlacenje
-  
-  Prva_Noga(q_nazad_skraceni);
-  Cetvrta_Noga(q_srednji);
-  Peta_Noga(q_nazad_produljeni);
-
-  delay(300);
-  ZakretMotoraPWM_246(q_naprijed_produljeni[1],Zglob_2);
-  ZakretMotoraPWM_135(q_srednji[1],Zglob_3);
-  ZakretMotoraPWM_246(q_naprijed_skraceni[1],Zglob_6);
-  
-}
-
-
-void Prvi_korak(float* q_naprijed_produljeni, float* q_naprijed_skraceni,float* q_nazad_produljeni,float* q_nazad_skraceni, float* q_srednji){
-
-  
-  ZakretMotoraPWM_135(q_naprijed_produljeni[1]+30,Zglob_1);
-  ZakretMotoraPWM_246(q_srednji[1]+30,Zglob_4);
-  ZakretMotoraPWM_135(q_naprijed_skraceni[1]+30,Zglob_5);
-  delay(300);
-  
-  Prva_Noga(q_naprijed_produljeni);
-  Cetvrta_Noga(q_srednji);
-  Peta_Noga(q_naprijed_skraceni);
-  
-  //Povlacenje
-  
-  Druga_Noga(q_nazad_skraceni);
-  Treca_Noga(q_srednji);
-  Sesta_Noga(q_nazad_produljeni);
-  
-  delay(300);
-  ZakretMotoraPWM_135(q_naprijed_produljeni[1],Zglob_1);
-  ZakretMotoraPWM_246(q_srednji[1],Zglob_4);
-  ZakretMotoraPWM_135(q_naprijed_skraceni[1],Zglob_5);
-}
-
-void Prva_Noga(float* q_naprijed){
-  
-  ZakretMotoraPWM_135(-q_naprijed[0],Kuk_1); // Dodajemo minus jer motor sa desne strane ide od 0 do 180 odozdo prema gore, dok za lijevu stranu je obratno
-  ZakretMotoraPWM_135(-q_naprijed[2],Koljeno_1);
-}
-
-void Druga_Noga(float* q_naprijed){
-  
-  ZakretMotoraPWM_246(q_naprijed[0],Kuk_2);
-  ZakretMotoraPWM_246(q_naprijed[2],Koljeno_2);
-}
-
-void Treca_Noga(float* q_naprijed){
-  
-  ZakretMotoraPWM_135(-q_naprijed[0],Kuk_3);
-  ZakretMotoraPWM_135(-q_naprijed[2],Koljeno_3);
-}
-
-void Cetvrta_Noga(float* q_naprijed){
-  
-
-  ZakretMotoraPWM_246(q_naprijed[0],Kuk_4);
-  ZakretMotoraPWM_246(q_naprijed[2],Koljeno_4);
-}
-
-void Peta_Noga(float* q_naprijed){
-  
-
-  ZakretMotoraPWM_135(-q_naprijed[0],Kuk_5);
-  ZakretMotoraPWM_135(q_naprijed[2],Koljeno_5);
-}
-
-void Sesta_Noga(float* q_naprijed){
-  
-
-  ZakretMotoraPWM_246(q_naprijed[0],Kuk_6);
-  ZakretMotoraPWM_246(q_naprijed[2],Koljeno_6);
-}
-
-void InverznaKI_srednja_noga(float q1, float q2, float q3, float x, float y, float z){
-  
-  if (Orjentacija=="Nazad" || Orjentacija=="Nazad lijevo" || Orjentacija=="Nazad desno"){
-    Izracun(q1,q2,q3,x,y,z);
-    q_motora_naprijed_produljeni[0]=-(degrees(atan2(brojnik_q1,nazivnik_q1))-20); // Dodajemo minus ako se krecemo unazad, tako da motor ide suprotno od onoga za naprijed
-    q_motora_naprijed_produljeni[1]=degrees(atan2(brojnik_q2,nazivnik_q2));
-    q_motora_naprijed_produljeni[2]=degrees(atan2(brojnik_q3,nazivnik_q3));
+    y2 = 70;
+    y1 = 0;
+    y2s = 29;
+    y1s = -29;
   }
+  else if (Orjentacija == "Lagano lijevo" || Orjentacija == "Lagano desno" || Orjentacija == "Nazad desno"|| Orjentacija == "Nazad lijevo") {
+    x1 = 67;
+    x2 = 5;
+    x1s = 80;
+    x2s = 80;
+
+    y1 = 10;
+    y2 = 81;
+    y1s = 30;
+    y2s = -30;
+  }
+  else {
+  }
+
+  for (int i = 0; i <= 50; i++) {
+
+    int znakA;
+    int znakB;
+    if (Orjentacija == "Naprijed" || Orjentacija == "Nazad" ) {
+      znakA = i;
+      znakB = 50 - i;
+    }
+    else if (Orjentacija == "Strogo desno" || Orjentacija == "Strogo lijevo"|| Orjentacija == "Lagano desno" || Orjentacija == "Lagano lijevo"|| Orjentacija == "Nazad desno"|| Orjentacija == "Nazad lijevo") {
+      znakA = 50 - i;
+      znakB = i;
+    }
+    elipsa(x1, x2, y1, y2, z1, z2, 1, i);
+      PozXEDp[znakA] = PozX;
+      PozYEDp[znakA] = PozY;
+      PozZEDp[znakA] = PozZ;
+    if (Orjentacija == "Lagano lijevo" || Orjentacija == "Lagano desno"|| Orjentacija == "Nazad desno"|| Orjentacija == "Nazad lijevo") {
+      elipsa(67, 40, 10, 46, z1, z2, 1, i);
+      PozXEKp[znakB] = PozX;
+      PozYEKp[znakB] = PozY;
+      PozZEKp[znakB] = PozZ;
+    }
+    else {
+      PozXEKp[znakB] = PozX;
+      PozYEKp[znakB] = PozY;
+      PozZEKp[znakB] = PozZ;
+    }
+    elipsa(x1s, x2s, y1s, y2s, z1, z2, 1, i);
+      PozXEs[i] = PozX;
+      PozYEs[i] = PozY;
+      PozZEs[i] = PozZ;
+
+//    Serial.print("----------ElipsaNaprijedPrednje---------");
+//    Serial.print("i=");
+//    Serial.println(i);
+    //    Serial.println(PozX);
+    //    Serial.println(PozY);
+    //    Serial.println(PozZ);
+
+//    Serial.println("----------Inverzna Kinematika---------");
+
+    Izracun(PozXEDp[znakA], PozYEDp[znakA], PozZEDp[znakA]);
+      q1_motora_PrednjeNogeE[znakA] = q1_motora;
+      q2_motora_PrednjeNogeE[znakA] = q2_motora;
+      q3_motora_PrednjeNogeE[znakA] = q3_motora;
+    Izracun(PozXEs[i], PozYEs[i], PozZEs[i]);
+      q1_motora_SrednjeNogeE[i] = q1_motora;
+      q2_motora_SrednjeNogeE[i] = q2_motora;
+      q3_motora_SrednjeNogeE[i] = q3_motora;
+    Izracun(PozXEKp[znakB], PozYEKp[znakB], PozZEKp[znakB]);
+      q1_motora_StraznjeNogeE[znakB] = q1_motora;
+      q2_motora_StraznjeNogeE[znakB] = q2_motora;
+      q3_motora_StraznjeNogeE[znakB] = q3_motora;
+  }
+
+
+  if (Orjentacija == "Naprijed" || Orjentacija == "Nazad") {
+
+    for (int i = 0; i <= 50; i++) {
+
+      Pravac(x1, x2, y1, y2, z1, z2, 1, i);
+        PozXPDp[i] = PozX;
+        PozYPDp[i] = PozY;
+        PozZPDp[i] = PozZ;
+        PozXPKp[50 - i] = PozX;
+        PozYPKp[50 - i] = PozY;
+        PozZPKp[50 - i] = PozZ;
+      Pravac(x1s, x2s, y1s, y2s, z1, z2, 1, i);
+        PozXPs[i] = PozX;
+        PozYPs[i] = PozY;
+        PozZPs[i] = PozZ;
+      
+      Serial.print("----------PravacNaprijedPrednje---------");
+      Serial.print("i=");
+      Serial.println(i);
+      Serial.println(PozX);
+      Serial.println(PozY);
+      Serial.println(PozZ);
+
+      //Serial.println("----------Inverzna Kinematika---------");
+      Izracun(PozXPDp[i], PozYPDp[i], PozZPDp[i]);
+        q1_motora_PrednjeNogeP[i] = q1_motora;
+        q2_motora_PrednjeNogeP[i] = q2_motora;
+        q3_motora_PrednjeNogeP[i] = q3_motora;
+      Izracun(PozXPs[i], PozYPs[i], PozZPs[i]);
+        q1_motora_SrednjeNogeP[i] = q1_motora;
+        q2_motora_SrednjeNogeP[i] = q2_motora;
+        q3_motora_SrednjeNogeP[i] = q3_motora;
+      Izracun(PozXPKp[50 - i], PozYPKp[50 - i], PozZPKp[50 - i]);
+        q1_motora_StraznjeNogeP[50 - i] = q1_motora;
+        q2_motora_StraznjeNogeP[50 - i] = q2_motora;
+        q3_motora_StraznjeNogeP[50 - i] = q3_motora;
+
+      //  Serial.println("----------Kraj---------");
+    }
+  }
+
   else{
-    Izracun(q1,q2,q3,x,y,z);
-    q_motora_naprijed_produljeni[0]=degrees(atan2(brojnik_q1,nazivnik_q1))-20;
-    q_motora_naprijed_produljeni[1]=degrees(atan2(brojnik_q2,nazivnik_q2));
-    q_motora_naprijed_produljeni[2]=degrees(atan2(brojnik_q3,nazivnik_q3));
-  }
+//------------------------------------------Putanja po kruznici---------------------------------------------------
+    float r = 230;
+    float GornjaGranica = 20;
+    float DonjaGranica = 22;
+    float XOdstupanje = -130;
+    float YOdstupanje = -85.5;
+    
+   
+    float rs = 212.5;
+    float GornjaGranicaS = 11;
+    float DonjaGranicaS = -8;
+    float XOdstupanjeS = -130;
 
+    if (Orjentacija == "Strogo desno" || Orjentacija == "Strogo lijevo") {
+      r = 330;
+      GornjaGranica = 5.5;
+      DonjaGranica = 30;
+      XOdstupanje = -216.5;
+      YOdstupanje = -125;
+      
+      
+      rs = 300;
+      GornjaGranicaS = 10;
+      DonjaGranicaS = -7.8;
+      XOdstupanjeS = -216.5;
+    }
+    else if (Orjentacija == "Lagano desno" || Orjentacija == "Lagano lijevo"|| Orjentacija == "Nazad desno"|| Orjentacija == "Nazad lijevo") {
+      r = 230;
+      GornjaGranica = 18;
+      DonjaGranica = 25;
+      XOdstupanje = -130;
+      YOdstupanje = -85.5;
+      
+      
+      rs = 212.5;
+      GornjaGranicaS = 11;
+      DonjaGranicaS = -8;
+      XOdstupanjeS = -130;
+    }
+    else{
+      
+    }
+
+    for (int i = 0; i <= 50; i++) {
+      Serial.print("----------Kruznica---------");
+      Serial.print("i=");
+      Serial.println(i);
+      Kruznica(r, z1, z2, GornjaGranica, DonjaGranica, XOdstupanje, YOdstupanje, i);
+        PozXPDp[i] = PozX;
+        PozYPDp[i] = PozY;
+        PozZPDp[i] = PozZ;
+      if (Orjentacija == "Lagano lijevo" || Orjentacija == "Lagano desno"|| Orjentacija == "Nazad desno"|| Orjentacija == "Nazad lijevo") {
+        Kruznica(215, z1, z2, 8.5, 26, XOdstupanjeS, -85.5, i);
+          PozXPKp[50 - i] = PozX;
+          PozYPKp[50 - i] = PozY;
+          PozZPKp[50 - i] = PozZ;
+      }
+      else {
+        PozXPKp[50 - i] = PozX;
+        PozYPKp[50 - i] = PozY;
+        PozZPKp[50 - i] = PozZ;
+      }
+
+      Kruznica(rs, z1, z2, GornjaGranicaS, DonjaGranicaS, XOdstupanjeS, 0, i);
+        PozXPs[i] = PozX;
+        PozYPs[i] = PozY;
+        PozZPs[i] = PozZ;
+        
+//      Serial.println("----------KruznicaSrednji---------");
+//      Serial.println(PozX);
+//      Serial.println(PozY);
+//      Serial.println(PozZ);
+
+      //Serial.println("----------Inverzna Kinematika---------");
+      
+      Izracun(PozXPDp[i], PozYPDp[i], PozZPDp[i]);
+        q1_motora_PrednjeNogeP[i] = q1_motora;
+        q2_motora_PrednjeNogeP[i] = q2_motora;
+        q3_motora_PrednjeNogeP[i] = q3_motora;
+      Izracun(PozXPs[i], PozYPs[i], PozZPs[i]);
+        q1_motora_SrednjeNogeP[i] = q1_motora;
+        q2_motora_SrednjeNogeP[i] = q2_motora;
+        q3_motora_SrednjeNogeP[i] = q3_motora;
+      Izracun(PozXPKp[50 - i], PozYPKp[50 - i], PozZPKp[50 - i]);
+        q1_motora_StraznjeNogeP[50 - i] = q1_motora;
+        q2_motora_StraznjeNogeP[50 - i] = q2_motora;
+        q3_motora_StraznjeNogeP[50 - i] = q3_motora;
+
+      //  Serial.println("----------Kraj---------");
+      }
+  }
 }
+//-----------------------------------------------GLIDE--------------------------------------------------------------------------------------------------------------//
+//-----------------------------------------------GLIDE--------------------------------------------------------------------------------------------------------------//
+//-----------------------------------------------GLIDE--------------------------------------------------------------------------------------------------------------//
+//-----------------------------------------------GLIDE--------------------------------------------------------------------------------------------------------------//
+//-----------------------------------------------GLIDE--------------------------------------------------------------------------------------------------------------//
 
+void RacunanjeGlide(double x1, double x2, double x1s, double x2s, double x1z, double x2z, double y1, double y2, double y1s, double y2s, double y1z, double y2z, double z1, double z2) {
 
-void InverznaKI_naprijed_produljeni(float q1, float q2, float q3, float x, float y, float z){
-  
-
-  if (Orjentacija=="Nazad" || Orjentacija=="Nazad lijevo" || Orjentacija=="Nazad desno"){
-    Izracun(q1,q2,q3,x-0.13,y-0.13,z);
-    q_motora_naprijed_produljeni[0]=-(degrees(atan2(brojnik_q1,nazivnik_q1))-20); // Dodajemo minus ako se krecemo unazad, tako da motor ide suprotno od onoga za naprijed
-    q_motora_naprijed_produljeni[1]=degrees(atan2(brojnik_q2,nazivnik_q2));
-    q_motora_naprijed_produljeni[2]=degrees(atan2(brojnik_q3,nazivnik_q3));
+  if (Orjentacija == "Naprijed" || Orjentacija == "Nazad") {
+    Racunanje(X1, X2, X1S, X2S, Y1, Y2, Y1S, Y2S, Z1, Z2);
   }
-  else{
-    Izracun(q1,q2,q3,x,y,z);
-    q_motora_naprijed_produljeni[0]=degrees(atan2(brojnik_q1,nazivnik_q1));
-    q_motora_naprijed_produljeni[1]=degrees(atan2(brojnik_q2,nazivnik_q2));
-    q_motora_naprijed_produljeni[2]=degrees(atan2(brojnik_q3,nazivnik_q3));
+  if (Orjentacija == "Strogo desno" ) {
+    x1 = 50;
+    x2 = 90;
+    x1s = 90;
+    x2s = 50;
+    x1z = 90;
+    x2z = 50;
+
+    y1 = 50;
+    y2 = 50;
+    y1s = 0;
+    y2s = 0;
+    y1z = 50;
+    y2z = 50;
   }
+    if (Orjentacija == "Strogo lijevo" ) {
+    x1 = 90;
+    x2 = 50;
+    x1s = 50;
+    x2s = 90;
+    x1z = 50;
+    x2z = 90;
 
-}
-
-void InverznaKI_naprijed_skraceni(float q1, float q2, float q3, float x, float y, float z){
-  
-
-  
-  if (Orjentacija=="Nazad" || Orjentacija=="Nazad lijevo" || Orjentacija=="Nazad desno"){
-    Izracun(q1,q2,q3,x,y,z);
-    q_motora_naprijed_skraceni[0]=-(degrees(atan2(brojnik_q1,nazivnik_q1))-20);
-    q_motora_naprijed_skraceni[1]=degrees(atan2(brojnik_q2,nazivnik_q2));
-    q_motora_naprijed_skraceni[2]=degrees(atan2(brojnik_q3,nazivnik_q3));
+    y1 = 50;
+    y2 = 50;
+    y1s = 0;
+    y2s = 0;
+    y1z = 50;
+    y2z = 50;
   }
-  else{
-    Izracun(q1,q2,q3,x-0.13,y-0.13,z);
-    q_motora_naprijed_skraceni[0]=degrees(atan2(brojnik_q1,nazivnik_q1));
-    q_motora_naprijed_skraceni[1]=degrees(atan2(brojnik_q2,nazivnik_q2));
-    q_motora_naprijed_skraceni[2]=degrees(atan2(brojnik_q3,nazivnik_q3));
+  else if (Orjentacija == "Nazad lijevo" || Orjentacija == "Nazad desno") {
+    x1 = 70;
+    x2 = 40;
+    x1s = 70;
+    x2s = 40;
+    x1z = 90;
+    x2z = 40;
+
+    y1 = 40;
+    y2 = 70;
+    y1s = -15;
+    y2s = 15;
+    y1z = 90;
+    y2z = 40;
+  }
+  else if (Orjentacija == "Lagano desno" || Orjentacija == "Lagano lijevo") {
+    x1 = 40;
+    x2 = 70;
+    x1s = 40;
+    x2s = 70;
+    x1z = 40;
+    x2z = 90;
+
+    y1 = 70;
+    y2 = 40;
+    y1s = 15;
+    y2s = -15;
+    y1z = 40;
+    y2z = 90;
+
+  }
+  else {
+    
   }
   
-
-
-
-}
-
-void InverznaKI_nazad_produljeni(float q1, float q2, float q3, float x, float y, float z){
-  
-  
-  if (Orjentacija=="Nazad" || Orjentacija=="Nazad lijevo" || Orjentacija=="Nazad desno"){
-    Izracun(q1,q2,q3,x-0.13,y-0.13,z);
-    q_motora_nazad_produljeni[0]=-degrees(atan2(brojnik_q1,nazivnik_q1));
-    q_motora_nazad_produljeni[1]=degrees(atan2(brojnik_q2,nazivnik_q2));
-    q_motora_nazad_produljeni[2]=degrees(atan2(brojnik_q3,nazivnik_q3));
-  }
-  else{
-    Izracun(q1,q2,q3,x,y,z);
-    q_motora_nazad_produljeni[0]=(degrees(atan2(brojnik_q1,nazivnik_q1))-20);
-    q_motora_nazad_produljeni[1]=degrees(atan2(brojnik_q2,nazivnik_q2));
-    q_motora_nazad_produljeni[2]=degrees(atan2(brojnik_q3,nazivnik_q3));
-  }
-
-}
-
-void InverznaKI_nazad_skraceni(float q1, float q2, float q3, float x, float y, float z){
-  
-
-  if (Orjentacija=="Nazad" || Orjentacija=="Nazad lijevo" || Orjentacija=="Nazad desno"){
-    Izracun(q1,q2,q3,x,y,z);
-    q_motora_nazad_skraceni[0]=-degrees(atan2(brojnik_q1,nazivnik_q1));
-    q_motora_nazad_skraceni[1]=degrees(atan2(brojnik_q2,nazivnik_q2));
-    q_motora_nazad_skraceni[2]=degrees(atan2(brojnik_q3,nazivnik_q3));
-  }
-  else{
-    Izracun(q1,q2,q3,x-0.13,y-0.13,z);
-    q_motora_nazad_skraceni[0]=(degrees(atan2(brojnik_q1,nazivnik_q1))-20);
-    q_motora_nazad_skraceni[1]=degrees(atan2(brojnik_q2,nazivnik_q2));
-    q_motora_nazad_skraceni[2]=degrees(atan2(brojnik_q3,nazivnik_q3));
-  }
-
-}
-
-void Izracun(float q1, float q2, float q3, float x, float y, float z){
-  
-  float L1=0.046;
-  float L2=0.089;
-  float L3=0.1485;
-  
-
-  float s1=sin(radians(q1));
-  float c1=cos(radians(q1));
-  float s2=sin(radians(q2));
-  float c2=cos(radians(q2));
-  float s3=sin(radians(q3));
-  float c3=cos(radians(q3));
-  float c23=cos(radians(q2+q3));
-  float s23=sin(radians(q2+q3));
-
-
-  brojnik_q1=y;
-  nazivnik_q1=x;
-
-  brojnik_q2=-s1*x+c1*y-L3*s23;
-  nazivnik_q2=c1*x+s1*y-L1-L3*c23;
-
-  brojnik_q3=-s1*x+c1*y+L1*s2;
-  nazivnik_q3=c2*(c1*x+s1*y)-s2*z-L1*c2-L2;
+if (Orjentacija == "Naprijed" || Orjentacija == "Nazad") {
   
 }
+else{
+  
+  for (int i = 0; i <= 50; i++) {
 
-void ZakretMotoraPWM_135 (float ang, int servo){
-  int pulse = map (ang, -90, 90, SERVOMIN, SERVOMAX);
-  pwm1.setPWM(servo,0,pulse);
-}
+    int znakA = i;
+    int znakB = 50-i;
 
-void ZakretMotoraPWM_246 (float ang, int servo){
-  int pulse = map (ang, -90, 90, SERVOMIN, SERVOMAX);
-  pwm2.setPWM(servo,0,pulse);
+    elipsa(x1, x2, y1, y2, z1, z2, 1, i);
+      PozXEDp[znakA] = PozX;
+      PozYEDp[znakA] = PozY;
+      PozZEDp[znakA] = PozZ;
+    elipsa(x1z, x2z, y1z, y2z, z1, z2, 1, i);
+      PozXEKp[znakB] = PozX;
+      PozYEKp[znakB] = PozY;
+      PozZEKp[znakB] = PozZ;
+    elipsa(x1s, x2s, y1s, y2s, z1, z2, 1, i);
+      PozXEs[i] = PozX;
+      PozYEs[i] = PozY;
+      PozZEs[i] = PozZ;
+
+//      Serial.print("----------ElipsaNaprijedPrednje---------");
+//      Serial.print("i=");
+//      Serial.println(i);
+//      Serial.println(PozX);
+//      Serial.println(PozY);
+//      Serial.println(PozZ);
+      
+    Izracun(PozXEDp[znakA], PozYEDp[znakA], PozZEDp[znakA]);
+      q1_motora_PrednjeNogeE[znakA] = q1_motora;
+      q2_motora_PrednjeNogeE[znakA] = q2_motora;
+      q3_motora_PrednjeNogeE[znakA] = q3_motora;
+    Izracun(PozXEs[i], PozYEs[i], PozZEs[i]);
+      q1_motora_SrednjeNogeE[i] = q1_motora;
+      q2_motora_SrednjeNogeE[i] = q2_motora;
+      q3_motora_SrednjeNogeE[i] = q3_motora;
+    Izracun(PozXEKp[znakB], PozYEKp[znakB], PozZEKp[znakB]);
+      q1_motora_StraznjeNogeE[znakB] = q1_motora;
+      q2_motora_StraznjeNogeE[znakB] = q2_motora;
+      q3_motora_StraznjeNogeE[znakB] = q3_motora;
+  }
+
+    for (int i = 0; i <= 50; i++) {
+
+      Pravac(x1, x2, y1, y2, z1, z2, 1, i);
+        PozXPDp[i] = PozX;
+        PozYPDp[i] = PozY;
+        PozZPDp[i] = PozZ;
+      Pravac(x1z, x2z, y1z, y2z, z1, z2, 1, i);
+        PozXPKp[50 - i] = PozX;
+        PozYPKp[50 - i] = PozY;
+        PozZPKp[50 - i] = PozZ;
+      Pravac(x1s, x2s, y1s, y2s, z1, z2, 1, i);
+        PozXPs[i] = PozX;
+        PozYPs[i] = PozY;
+        PozZPs[i] = PozZ;
+
+//      Serial.print("----------PravacNaprijedPrednje---------");
+//      Serial.print("i=");
+//      Serial.println(i);
+//      Serial.println(PozX);
+//      Serial.println(PozY);
+//      Serial.println(PozZ);
+        
+      //Serial.println("----------Inverzna Kinematika---------");
+      Izracun(PozXPDp[i], PozYPDp[i], PozZPDp[i]);
+        q1_motora_PrednjeNogeP[i] = q1_motora;
+        q2_motora_PrednjeNogeP[i] = q2_motora;
+        q3_motora_PrednjeNogeP[i] = q3_motora;
+      Izracun(PozXPs[i], PozYPs[i], PozZPs[i]);
+        q1_motora_SrednjeNogeP[i] = q1_motora;
+        q2_motora_SrednjeNogeP[i] = q2_motora;
+        q3_motora_SrednjeNogeP[i] = q3_motora;
+      Izracun(PozXPKp[50 - i], PozYPKp[50 - i], PozZPKp[50 - i]);
+        q1_motora_StraznjeNogeP[50 - i] = q1_motora;
+        q2_motora_StraznjeNogeP[50 - i] = q2_motora;
+        q3_motora_StraznjeNogeP[50 - i] = q3_motora;
+      //  Serial.println("----------Kraj---------");
+    }
+  }
 }
